@@ -48,6 +48,22 @@
     // Learn the client language from the shop's own item captions as soon as the shop opens, so the
     // list shows the game's names before anything is bought. A few cheap tries, then give up (English).
     var _langTries = 0;
+    // The few strings the panel itself shows, in the client's language (Russian-family clients get ru).
+    var UI_TEXT = {
+        en: { title: "Item Assist", rank: "My rank", auto: "Auto", low: "1-3", mid: "4-6", high: "7-8", pro: "9+",
+              data: "data", autoRank: "auto", noRank: "no rank yet", queue: "Auto-queue", queueHint: "puts our next 6 items into Quick Buy; the game buys them at a shop",
+              marks: "Shop marks", marksHint: "numbers on the shop's item cards", debug: "diagnostics", calibrating: "finding your hero…",
+              tiersHint: "1-3 Initiate–Alchemist, 4-6 Arcanist–Emissary, 7-8 Archon–Oracle, 9+ Phantom+" },
+        ru: { title: "Что купить", rank: "Мой ранг", auto: "Авто", low: "1-3", mid: "4-6", high: "7-8", pro: "9+",
+              data: "данные", autoRank: "авто", noRank: "ранга пока нет", queue: "Автоочередь", queueHint: "кладёт наши 6 предметов в быструю покупку, игра выкупает их у лавки",
+              marks: "Метки в магазине", marksHint: "номера на карточках предметов", debug: "диагностика", calibrating: "определяю героя…",
+              tiersHint: "1-3 Initiate–Alchemist, 4-6 Arcanist–Emissary, 7-8 Archon–Oracle, 9+ Phantom+" }
+    };
+    function T(k) {
+        var ru = _uiLang === "russian" || _uiLang === "ukrainian" || _uiLang === "bulgarian";
+        var d = UI_TEXT[ru ? "ru" : "en"];
+        return d[k] || UI_TEXT.en[k] || k;
+    }
     function detectUiLang(shop) {
         if (_uiLang || _langTries >= 5 || !shop || !shop.FindChildrenWithClassTraverse) return;
         _langTries++;
@@ -92,13 +108,16 @@
     // ---- CONFIG (knobs, persisted) -----------------------------------------
     // mode "blend" (default) = pick rate + value; rank = data band matching the player's own rank
     // (null -> DATA.meta.default_band); cfgV bumps when a default changes so old saved configs migrate.
-    var CFG = { count: 8, refreshSec: 3, opacity: 90, side: "left", mode: "blend", rank: null, showPct: true, min: false, holding: false, holdCount: 3, coach: false, gubami: false, skills: false, buy: true, counters: true, tips: false, badges: true, qsync: false, cfgV: 2 };
+    var CFG = { count: 8, refreshSec: 3, opacity: 100, side: "left", mode: "blend", rank: null, showPct: false, min: false, holding: false, holdCount: 3, coach: false, gubami: false, skills: false, buy: true, counters: true, tips: false, badges: true, qsync: false, cfgV: 2 };
     var GUBAMI_ICON = "s2r://panorama/images/gubami/gubami_coach.vtex";   // bundled custom portrait (mod asset)
     function loadCfg() {
         var s = null;
         try { s = $.persistentStorage.getItem("qlrec_cfg"); } catch (e) {  }
         var savedV = 0;
-        try { if (s) { var o = JSON.parse(s); savedV = o.cfgV || 0; for (var k in o) if (CFG.hasOwnProperty(k)) CFG[k] = o[k]; } } catch (e) {}
+        // Only the choices still offered in the settings are restored; everything else is fixed to the
+        // values the research and in-game tests settled on (blend sort, 8 items, no extra columns).
+        var USER_KEYS = { rank: 1, qsync: 1, badges: 1, min: 1 };
+        try { if (s) { var o = JSON.parse(s); savedV = o.cfgV || 0; for (var k in o) if (USER_KEYS[k] && CFG.hasOwnProperty(k)) CFG[k] = o[k]; } } catch (e) {}
         // v2: "popular" stopped being the default (pure copying of common buys was the least robust mode
         // in research/sim.py), so configs saved with the old default move to "blend".
         if (savedV < 2 && (CFG.mode === "popular" || CFG.mode === "balanced" || CFG.mode === "smart")) CFG.mode = "blend";
@@ -743,7 +762,7 @@
         enemy: "#FF410D",           // colorEnemy
         panelBg: "#181A17F2",       // dark like the game's item tooltips: the old paper look needed a
                                     // texture Valve renamed in 6819, and colored names/prices washed out on tan
-        border: "#5FE69E38",        // brandGreen hairline (subtle, ties to the accent)
+        border: "#5FE69E70",        // brandGreen frame, visible against the shop backdrop
         btn: "#34372FE6",           // unselected buttons, a step above the panel
         btnOn: "#3C9E6Acc",         // darker green for text-buttons (offWhite stays readable on it)
         switchOn: "#5FE69E"         // bright brandGreen for switch tracks (matches settings toggle)
@@ -884,14 +903,16 @@
     }
     function ensureFloat(shop) {
         if (valid(_float)) return _float;
-        _float = $.CreatePanel("Panel", shop, FLOAT_ID);
+        // Parented to the HUD root (not the shop) with a high z-index, so the game's quick-buy widget and
+        // the souls badge no longer draw over it; tick() shows it only while the shop is open.
+        _float = $.CreatePanel("Panel", hudRoot() || shop, FLOAT_ID);
         css(_float, {
             horizontalAlign: CFG.side, verticalAlign: "top", marginLeft: "10px", marginRight: "10px",
             marginTop: "300px",    // top-anchored between the game's kill feed (top-left) and the hero stats
                                    // (bottom-left); centred, a tall panel slid down over the stats
-            width: "340px", backgroundColor: PAL.panelBg, backgroundImage: SHOP_BG, backgroundSize: "cover", backgroundRepeat: "no-repeat",
-            borderRadius: "4px", border: "1px solid " + PAL.border,
-            padding: "12px 14px", flowChildren: "down", zIndex: "40", opacity: (CFG.opacity / 100).toString(),
+            width: "360px", backgroundColor: PAL.panelBg, backgroundImage: SHOP_BG, backgroundSize: "cover", backgroundRepeat: "no-repeat",
+            borderRadius: "6px", border: "2px solid " + PAL.border,
+            padding: "12px 14px", flowChildren: "down", zIndex: "1000", opacity: "1",
             boxShadow: "0px 2px 10px 0px #000000b0"
         });
         var titleRow = $.CreatePanel("Panel", _float, ""); css(titleRow, { flowChildren: "right", marginBottom: "8px", width: "100%" });
@@ -977,7 +998,7 @@
 
     function knobRow(box, label, opts, cur, pick, btnStyle) {
         var row = $.CreatePanel("Panel", box, ""); css(row, { flowChildren: "right", marginBottom: "3px" });
-        var l = $.CreatePanel("Label", row, ""); l.text = label; css(l, { width: "70px", color: PAL.dim, fontSize: "14px", fontFamily: PAL.font, verticalAlign: "center" });
+        var l = $.CreatePanel("Label", row, ""); l.text = label; css(l, { width: "92px", color: PAL.text, fontSize: "15px", fontFamily: PAL.font, verticalAlign: "center" });
         for (var i = 0; i < opts.length; i++) (function (o) {
             var st = { backgroundColor: cur === o.v ? PAL.btnOn : PAL.btn };
             if (btnStyle) for (var k in btnStyle) if (btnStyle.hasOwnProperty(k)) st[k] = btnStyle[k];
@@ -998,7 +1019,7 @@
     }
     function switchRow(box, label, value, onChange) {
         var row = $.CreatePanel("Panel", box, ""); css(row, { flowChildren: "right", marginBottom: "4px", width: "100%" });
-        var l = $.CreatePanel("Label", row, ""); l.text = label; css(l, { width: "70px", color: PAL.dim, fontSize: "14px", fontFamily: PAL.font, verticalAlign: "center" });
+        var l = $.CreatePanel("Label", row, ""); l.text = label; css(l, { width: "170px", color: PAL.text, fontSize: "15px", fontFamily: PAL.font, verticalAlign: "center" });
         mkSwitch(row, value, function () { onChange(!value); });
     }
     // One-off search of the HUD for anything that could carry the player's rank (ids with rank / badge /
@@ -1029,7 +1050,16 @@
     // misbehave). Entries are #QuickbuyQueue > CitadelHudQuickbuyEntry with a localized #ModName and a
     // #DeleteButton that removes the entry when activated. We only ever add or remove our own pick; the
     // player's build items stay queued behind it.
-    var _qsAdded = null, _qsNextAt = 0, _qbPanel = null;
+    var QS_N = 6;                       // queue length we keep: enough that Quick Buy never runs dry between refreshes
+    var _qsNextAt = 0, _qbPanel = null, _qsSetupDone = false, _qsSetupLog = "-", _qsWant = [], _qsAqWasOn = false;
+    // Turning Auto-queue off gives the game's own "auto-queue build" back if we were the ones who
+    // switched it off (it is a saved game setting, not ours).
+    function queueRestore() {
+        if (!_qsAqWasOn) return;
+        var aq = hudRoot() && hudRoot().FindChildTraverse ? hudRoot().FindChildTraverse("AutoQueueToggleButton") : null;
+        if (aq && isOn(aq) === false) { try { $.DispatchEvent("Activated", aq, "mouse"); } catch (e) {} }
+        _qsAqWasOn = false;
+    }
     function qbQueue() {
         var root = hudRoot();
         if (!valid(_qbPanel)) _qbPanel = root && root.FindChildTraverse ? root.FindChildTraverse("QuickbuyQueue") : null;   // cached: no per-tick tree walk
@@ -1042,79 +1072,89 @@
         }
         return out;
     }
-    function qbDelete(entry) {
-        var b = entry && entry.panel && entry.panel.FindChildTraverse ? entry.panel.FindChildTraverse("DeleteButton") : null;
-        if (b) { try { $.DispatchEvent("Activated", b, "mouse"); } catch (e) {} }
-    }
     function qbAddFront(id) { try { $.DispatchEvent("CitadelQuickbuyAddItem", Number(id), 0, 0); } catch (e) {} }
+    function isOn(p) {
+        if (!p) return null;
+        try { if (typeof p.checked === "boolean") return p.checked; } catch (e) {}
+        return hasCls(p, "selected") || hasCls(p, "checked");
+    }
+    // Once per match while Auto-queue is on: the game's "auto-queue build" refills the queue from the
+    // selected build (it would push our picks out), and auto-buy must be on for the game to purchase.
+    function queueSetup(root) {
+        if (_qsSetupDone || !root || !root.FindChildTraverse) return;
+        var aq = root.FindChildTraverse("AutoQueueToggleButton"), ab = root.FindChildTraverse("AutoBuyToggleButton");
+        if (!aq && !ab) return;
+        var aqOn = isOn(aq), abOn = isOn(ab), log = [];
+        if (aq && aqOn) { try { $.DispatchEvent("Activated", aq, "mouse"); _qsAqWasOn = true; log.push("build auto-queue off"); } catch (e) {} }
+        if (ab && abOn === false) { try { $.DispatchEvent("Activated", ab, "mouse"); log.push("auto-buy on"); } catch (e) {} }
+        _qsSetupLog = (log.join(", ") || "nothing to change") + " (aq " + aqOn + ", ab " + abOn + ")";
+        _qsSetupDone = true;
+    }
     function queueSync(root, shop) {
         if (!CFG.qsync || !_heroId || _hb < _qsNextAt) return;
-        var recs = computeRecs(_heroId, getSouls(root), getOwnedNames(shop), _enemies, getGameTimeSec(root));
-        if (!recs.length) return;
-        var top = recs[0].id, q = qbQueue();
-        if (q.length && q[0].id === top) { _qsAdded = top; return; }
-        _qsNextAt = _hb + 3;   // one change per 3 s: each step waits for the server's queue update
-        for (var i = 0; i < q.length; i++) {
-            if (q[i].id === _qsAdded && _qsAdded !== top) { qbDelete(q[i]); return; }   // our stale pick goes first
-        }
-        for (var j = 1; j < q.length; j++) if (q[j].id === top) { qbDelete(q[j]); return; }   // no duplicate further back
-        qbAddFront(top);
-        _qsAdded = top;
+        queueSetup(root);
+        // the queue is exactly the panel's list: same items, same order (affordable first, then the
+        // cheapest ones to save for) — raw score order put late-game T4s first while you had 0 souls
+        var recs = computeRecs(_heroId, getSouls(root), getOwnedNames(shop), _enemies, getGameTimeSec(root)), want = [];
+        for (var i = 0; i < recs.length && want.length < QS_N; i++) want.push(recs[i].id);
+        _qsWant = want;
+        if (!want.length) return;
+        var have = qbQueue().map(function (x) { return x.id; }), foreign = false, frontSame = true;
+        for (var j = 0; j < have.length; j++) if (want.indexOf(have[j]) === -1) { foreign = true; break; }
+        for (var f = 0; f < 3 && f < want.length; f++) if (have[f] !== want[f]) { frontSame = false; break; }
+        if (!foreign && frontSame && have.length >= Math.min(QS_N, want.length)) return;   // small reshuffles at the tail don't churn the queue
+        // rebuild: clear, let the server apply it, then append the picks in order (an add right after
+        // the clear was lost in testing, so the first one waits 0.8 s and the rest are spaced 0.5 s)
+        _qsNextAt = _hb + 8;
+        try { $.DispatchEvent("CitadelQuickbuyClearQueue"); } catch (e) {}
+        var k = 0;
+        $.Schedule(0.8, function addNext() { if (k >= want.length) return; qbAddFront(want[k++]); $.Schedule(0.5, addNext); });
+    }
+    var _dbgShown = false;
+    function hintLabel(text) {
+        var l = $.CreatePanel("Label", _cfgBox, ""); l.text = text;
+        css(l, { color: PAL.faint, fontSize: "13px", fontFamily: PAL.font, marginLeft: "4px", marginBottom: "8px", width: "100%" });
     }
     function renderConfig() {
         if (!valid(_cfgBox)) return;
         _cfgBox.RemoveAndDeleteChildren();
         css(_cfgBox, { visibility: _cfgShown ? "visible" : "collapse" });
         if (!_cfgShown) return;
-        var hdr = $.CreatePanel("Label", _cfgBox, ""); hdr.text = "SETTINGS"; css(hdr, { color: PAL.faint, fontSize: "12px", fontFamily: PAL.font, letterSpacing: "2px", marginBottom: "5px" });
-        knobRow(_cfgBox, "Sort", [{ t: "Blend", v: "blend" }, { t: "Pop", v: "popular" }, { t: "Value", v: "value" }, { t: "Eff", v: "efficiency" }], CFG.mode, function (v) { CFG.mode = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
-        knobRow(_cfgBox, "My rank", [{ t: "Auto", v: null }, { t: "Low", v: "low" }, { t: "Mid", v: "mid" }, { t: "High", v: "high" }, { t: "Pro", v: "pro" }], CFG.rank, function (v) { CFG.rank = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); }, { padding: "3px 6px", marginRight: "3px" });
-        var bandName = "";
-        var bl = (DATA.meta && DATA.meta.bands) || [];
+        // 1) rank: Auto reads the badge from the match; manual bands for players without one
+        knobRow(_cfgBox, T("rank"), [{ t: T("auto"), v: null }, { t: T("low"), v: "low" }, { t: T("mid"), v: "mid" }, { t: T("high"), v: "high" }, { t: T("pro"), v: "pro" }],
+                CFG.rank, function (v) { CFG.rank = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); }, { padding: "4px 7px", marginRight: "3px" });
+        var bandName = "", bl = (DATA.meta && DATA.meta.bands) || [];
         for (var bi = 0; bi < bl.length; bi++) if (bl[bi].id === bandId()) bandName = bl[bi].name;
-        var rk = _rankTier !== null ? RANK_NAMES[_rankTier] + (_rankSub !== null ? " " + _rankSub : "") : "rank not found";
-        if (bandName) { var bn = $.CreatePanel("Label", _cfgBox, ""); bn.text = "data: " + bandName + (CFG.rank ? "" : " · auto: " + rk); css(bn, { color: PAL.faint, fontSize: "12px", fontFamily: PAL.font, marginLeft: "70px", marginBottom: "4px" }); }
-        knobRow(_cfgBox, "Items", [{ t: "5", v: 5 }, { t: "8", v: 8 }, { t: "10", v: 10 }, { t: "15", v: 15 }], CFG.count, function (v) { CFG.count = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
-        switchRow(_cfgBox, "Pct", CFG.showPct, function (v) { CFG.showPct = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
-        switchRow(_cfgBox, "Click-buy", CFG.buy, function (v) { CFG.buy = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
-        switchRow(_cfgBox, "Queue sync", CFG.qsync, function (v) { CFG.qsync = v; _qsNextAt = 0; saveCfg(); renderConfig(); });
-        switchRow(_cfgBox, "Shop marks", CFG.badges, function (v) { CFG.badges = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
-        switchRow(_cfgBox, "Counters", CFG.counters, function (v) { CFG.counters = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
-        switchRow(_cfgBox, "Skill order", CFG.skills, function (v) { CFG.skills = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
-        switchRow(_cfgBox, "Item tips", CFG.tips, function (v) { CFG.tips = v; saveCfg(); if (!v) hideTip(); renderConfig(); });
-        var crow = $.CreatePanel("Panel", _cfgBox, ""); css(crow, { flowChildren: "right", marginBottom: "3px" });
-        var cl = $.CreatePanel("Label", crow, ""); cl.text = "Coach"; css(cl, { width: "70px", color: PAL.dim, fontSize: "14px", fontFamily: PAL.font, verticalAlign: "center" });
-        mkSwitch(crow, CFG.coach, function () { CFG.coach = !CFG.coach; saveCfg(); if (!CFG.coach) hideCoach(); else coachPreview(); renderConfig(); });
-        knobRow(_cfgBox, "Refresh", [{ t: "3s", v: 3 }, { t: "5s", v: 5 }, { t: "10s", v: 10 }, { t: "30s", v: 30 }], CFG.refreshSec, function (v) { CFG.refreshSec = v; saveCfg(); renderConfig(); });
-        knobRow(_cfgBox, "Opacity", [{ t: "60", v: 60 }, { t: "80", v: 80 }, { t: "100", v: 100 }], CFG.opacity, function (v) { CFG.opacity = v; applyCfg(); renderConfig(); });
-        knobRow(_cfgBox, "Side", [{ t: "Left", v: "left" }, { t: "Right", v: "right" }], CFG.side, function (v) { CFG.side = v; applyCfg(); renderConfig(); });
-        // --- Soul-holding group, set off by separators above and below ---
-        cfgSep();
-        switchRow(_cfgBox, "Soul hold", CFG.holding, function (v) { CFG.holding = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
-        knobRow(_cfgBox, "Next", [{ t: "1", v: 1 }, { t: "2", v: 2 }, { t: "3", v: 3 }, { t: "5", v: 5 }], CFG.holdCount, function (v) { CFG.holdCount = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
-        cfgSep();
-        // Turn Off: collapse to just the draggable "★ Buy Next" title (click title to restore).
-        var doHide = function () { _cfgShown = false; renderConfig(); setMinimized(true); };
-        mkBtn(_cfgBox, "Turn Off", doHide, { backgroundColor: PAL.btnOn, marginTop: "4px" });
-        // What the mod currently reads from the HUD — lets a screenshot tell whether enemy detection,
-        // the purchase feed and the client language work on this machine.
-        var en = [], ei = [], ctrN = 0, seenN = 0, ownN = 0, k;
+        var rk = _rankTier !== null ? RANK_NAMES[_rankTier] + (_rankSub !== null ? " " + _rankSub : "") : T("noRank");
+        hintLabel(T("data") + ": " + bandName + (CFG.rank ? "" : " · " + T("autoRank") + ": " + rk) + " · " + T("tiersHint"));
+        // 2) auto-queue: our picks become the game's Quick Buy queue
+        switchRow(_cfgBox, T("queue"), CFG.qsync, function (v) { CFG.qsync = v; _qsNextAt = 0; _qsSetupDone = false; if (!v) queueRestore(); saveCfg(); renderConfig(); });
+        hintLabel(T("queueHint"));
+        // 3) rank numbers on the shop cards
+        switchRow(_cfgBox, T("marks"), CFG.badges, function (v) { CFG.badges = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
+        hintLabel(T("marksHint"));
+        // diagnostics, collapsed: what the mod reads from the HUD (for bug reports)
+        var dl = $.CreatePanel("Label", _cfgBox, ""); dl.text = (_dbgShown ? "▾ " : "▸ ") + T("debug");
+        css(dl, { color: PAL.faint, fontSize: "12px", fontFamily: PAL.font, marginTop: "2px" });
+        var dcb = withClick(function () { _dbgShown = !_dbgShown; renderConfig(); });
+        dl.SetPanelEvent("onactivate", dcb); dl.SetPanelEvent("onmouseactivate", dcb);
+        if (!_dbgShown) return;
+        var en = [], ei = [], ctrN = 0, seenN = 0, k, ownL = [];
         for (var e = 0; e < _enemies.length; e++) en.push((DATA.heroes && DATA.heroes[String(_enemies[e])]) || _enemies[e]);
         for (k in _enemyItems) if (_enemyItems.hasOwnProperty(k)) { ei.push(itemName(k)); if (CTR[k]) ctrN++; }
         for (k in _rpSeen) if (_rpSeen.hasOwnProperty(k)) seenN++;
-        for (k in _ownedAccum) if (_ownedAccum.hasOwnProperty(k)) ownN++;
-        var ownL = []; for (k in _ownedAccum) if (_ownedAccum.hasOwnProperty(k)) ownL.push(itemName(nameToId(k) || k));
-        var diag = ["lang " + (_uiLang || "en?") + " · team " + localTeamNum(hudRoot()) + " · hero " + ((DATA.heroes && DATA.heroes[String(_heroId)]) || "?") + " (switches " + _heroSwitches + ")",
-                    "owned " + ownN + (ownL.length ? ": " + ownL.slice(-6).join(", ") : ""),
-                    "hero history: " + (_heroHist.join(" > ") || "-"),
-                    "lane: " + (_laneEnemies.map(function (x) { return (DATA.heroes && DATA.heroes[String(x)]) || x; }).join(", ") || "-"),
-                    "enemies " + en.length + ": " + en.join(", "),
-                    "feed " + seenN + " buys · enemy items " + ei.length + " (counters " + ctrN + ")",
-                    ei.length ? "last: " + ei.slice(-3).join(", ") : "",
-                    _rpLast.length ? "feed: " + _rpLast.join(" / ") : ""];
-        for (var dg = 0; dg < diag.length; dg++) if (diag[dg]) {
+        for (k in _ownedAccum) if (_ownedAccum.hasOwnProperty(k)) ownL.push(itemName(nameToId(k) || k));
+        var qn = qbQueue().map(function (x) { return x.id ? itemName(x.id) : "?"; });
+        var diag = ["lang " + (_uiLang || "en?") + " · hero " + ((DATA.heroes && DATA.heroes[String(_heroId)]) || "?") + " · " + (_heroHist.join(" > ") || "-"),
+                    "owned " + ownL.length + (ownL.length ? ": " + ownL.slice(-6).join(", ") : ""),
+                    "lane: " + (_laneEnemies.map(function (x) { return (DATA.heroes && DATA.heroes[String(x)]) || x; }).join(", ") || "-") + " · enemies " + en.join(", "),
+                    "feed " + seenN + " · enemy items " + ei.length + " (counters " + ctrN + ")" + (ei.length ? ": " + ei.slice(-3).join(", ") : ""),
+                    "want: " + _qsWant.map(function (x) { return itemName(x); }).join(", "),
+                    "queue " + qn.length + ": " + qn.slice(0, 7).join(", "),
+                    "queue setup: " + _qsSetupLog];
+        for (var dg = 0; dg < diag.length; dg++) {
             var dgl = $.CreatePanel("Label", _cfgBox, ""); dgl.text = diag[dg];
-            css(dgl, { color: PAL.text, fontSize: "13px", fontFamily: PAL.font, marginTop: dg ? "0px" : "6px" });
+            css(dgl, { color: PAL.dim, fontSize: "12px", fontFamily: PAL.font, width: "100%" });
         }
     }
     function cfgSep() { var s = $.CreatePanel("Panel", _cfgBox, ""); css(s, { height: "1px", width: "100%", backgroundColor: PAL.border, marginTop: "4px", marginBottom: "6px" }); }
@@ -1136,14 +1176,14 @@
         var owned = getOwnedNames(shop);
         var sig = Object.keys(owned).sort().join(",");
         if (sig !== _ownedSig) { _ownedSig = sig;  }
-        if (valid(_title)) _title.text = "Buy Next";
+        if (valid(_title)) _title.text = T("title");
         if (!valid(_body)) return;
         // --- placeholder states (compute nothing heavy) ---
         if (!hero) {
             var diagSig = "@calibrating" + _heroDiag.join("|");
             if (_renderSig === diagSig && _body.GetChildCount() > 0) return;
             _renderSig = diagSig; _body.RemoveAndDeleteChildren();
-            var c = $.CreatePanel("Label", _body, ""); c.text = "calibrating…"; css(c, { color: PAL.dim, fontSize: "16px", fontFamily: PAL.font });
+            var c = $.CreatePanel("Label", _body, ""); c.text = T("calibrating"); css(c, { color: PAL.dim, fontSize: "16px", fontFamily: PAL.font });
             // what the hero detection saw — readable from a screenshot when a client/language breaks it
             for (var di = 0; di < _heroDiag.length; di++) {
                 var dl = $.CreatePanel("Label", _body, ""); dl.text = _heroDiag[di];
@@ -1156,7 +1196,7 @@
         if (!recs.length) {
             if (_renderSig === "@empty" && _body.GetChildCount() > 0) return;
             _renderSig = "@empty"; _body.RemoveAndDeleteChildren();
-            var e = $.CreatePanel("Label", _body, ""); e.text = "calibrating…"; css(e, { color: PAL.dim, fontSize: "16px", fontFamily: PAL.font }); return;
+            var e = $.CreatePanel("Label", _body, ""); e.text = T("calibrating"); css(e, { color: PAL.dim, fontSize: "16px", fontFamily: PAL.font }); return;
         }
         var hold = CFG.holding ? computeHolding(souls, t) : { tier: 0, items: [] };
         var holdIds = {};
@@ -1240,7 +1280,7 @@
     function rowRender(parent, it, idx) {
         var slotCol = _slotColor[it.slot] || PAL.text;
         var rowBg = (idx % 2 ? "#FFFFFF08" : "#00000000");
-        var row = $.CreatePanel("Panel", parent, ""); css(row, { flowChildren: "right", width: "100%", padding: "3px 4px", marginBottom: "1px", backgroundColor: rowBg, borderRadius: "2px", opacity: it.aff ? "1.0" : "0.45" });
+        var row = $.CreatePanel("Panel", parent, ""); css(row, { flowChildren: "right", width: "100%", padding: "5px 6px", marginBottom: "2px", backgroundColor: rowBg, borderRadius: "2px", opacity: it.aff ? "1.0" : "0.45" });
         hoverFxTip(row, rowBg, "#FFFFFF1C", it);   // brighten on hover + show this item's tip in the side panel
         var bar = $.CreatePanel("Panel", row, ""); css(bar, { width: "3px", height: "18px", backgroundColor: slotCol, borderRadius: "2px", marginRight: "8px", verticalAlign: "center" });
         var rk = $.CreatePanel("Label", row, ""); rk.text = (idx + 1); css(rk, { width: "20px", color: PAL.faint, fontSize: "15px", fontFamily: PAL.font, verticalAlign: "center" });
@@ -1249,7 +1289,7 @@
         }
         var isSyn = (it.syn && it.syn > 0.05);      // pairs well with your current build (gold)
         var isCtr = (it.ctr && it.ctr > 0.03);      // counters something the enemy team built (green)
-        var nm = $.CreatePanel("Label", row, ""); nm.text = it.name; css(nm, { color: isSyn ? PAL.gold : (isCtr ? PAL.accent : PAL.text), fontSize: "16px", fontFamily: PAL.font, verticalAlign: "center" });
+        var nm = $.CreatePanel("Label", row, ""); nm.text = it.name; css(nm, { color: isSyn ? PAL.gold : (isCtr ? PAL.accent : PAL.text), fontSize: "17px", fontFamily: PAL.font, verticalAlign: "center", maxWidth: "190px", textOverflow: "ellipsis", whiteSpace: "nowrap" });
         if (it.imb) {   // imbue item -> show the recommended ability's ICON (same art as SKILL ORDER)
             var abIcons = DATA.abilityIcon && DATA.abilityIcon[String(_heroId)];
             var abIc = abIcons && abIcons[String(it.imb)];
@@ -1267,7 +1307,7 @@
             css(pc, { color: PAL.dim, fontSize: "14px", fontFamily: PAL.font, marginRight: "8px", verticalAlign: "center" });
         }
         var priceCol = _slotColorMid[it.slot] || slotCol;   // dimmed (halfway to dark), not as dim as before
-        var co = $.CreatePanel("Label", rightGrp, ""); co.text = String(it.cost); css(co, { color: priceCol, fontSize: "16px", fontFamily: PAL.font, verticalAlign: "center" });
+        var co = $.CreatePanel("Label", rightGrp, ""); co.text = String(it.cost); css(co, { color: priceCol, fontSize: "17px", fontFamily: PAL.font, verticalAlign: "center" });
         var si = $.CreatePanel("Panel", rightGrp, ""); css(si, { width: "13px", height: "13px", marginLeft: "3px", backgroundImage: 'url("' + ICON_SOUL + '")', backgroundSize: "contain", backgroundRepeat: "no-repeat", washColor: priceCol, verticalAlign: "center" });
         // Click-to-buy: clicking an affordable row activates the game's real shop panel.
         if (CFG.buy && it.aff) {
@@ -1572,8 +1612,8 @@
             hideCoach(); _shopWasOpen = false; if (_helpShown) closeHelp();
             $.Schedule(1.0, tick); return;
         }
-        if (valid(_float)) css(_float, { visibility: "visible" });   // restore after leaving brawl (back in hideout)
         var shop = shopIfOpen(root);
+        if (valid(_float)) css(_float, { visibility: shop ? "visible" : "collapse" });   // root-level panel: follow the shop
         if (shop) {
             // Enemy-purchase + owned accumulation. SHOP-OPEN ONLY now (was every tick, open or closed):
             // the per-second feed scan while roaming was a stutter source. The recent-purchases feed
