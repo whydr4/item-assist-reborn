@@ -55,13 +55,19 @@
     }
 
     // ---- CONFIG (knobs, persisted) -----------------------------------------
-    var CFG = { count: 8, refreshSec: 3, opacity: 90, side: "left", mode: "popular", showPct: true, min: false, holding: true, holdCount: 3, coach: false, gubami: false, skills: false, buy: true, counters: true, tips: false };
+    // mode "blend" (default) = pick rate + value; rank = data band matching the player's own rank
+    // (null -> DATA.meta.default_band); cfgV bumps when a default changes so old saved configs migrate.
+    var CFG = { count: 8, refreshSec: 3, opacity: 90, side: "left", mode: "blend", rank: null, showPct: true, min: false, holding: true, holdCount: 3, coach: false, gubami: false, skills: false, buy: true, counters: true, tips: false, cfgV: 2 };
     var GUBAMI_ICON = "s2r://panorama/images/gubami/gubami_coach.vtex";   // bundled custom portrait (mod asset)
     function loadCfg() {
         var s = null;
         try { s = $.persistentStorage.getItem("qlrec_cfg"); } catch (e) {  }
-        try { if (s) { var o = JSON.parse(s); for (var k in o) if (CFG.hasOwnProperty(k)) CFG[k] = o[k]; } } catch (e) {}
-        if (CFG.mode === "balanced" || CFG.mode === "smart") CFG.mode = "popular";
+        var savedV = 0;
+        try { if (s) { var o = JSON.parse(s); savedV = o.cfgV || 0; for (var k in o) if (CFG.hasOwnProperty(k)) CFG[k] = o[k]; } } catch (e) {}
+        // v2: "popular" stopped being the default (pure copying of common buys was the least robust mode
+        // in research/sim.py), so configs saved with the old default move to "blend".
+        if (savedV < 2 && (CFG.mode === "popular" || CFG.mode === "balanced" || CFG.mode === "smart")) CFG.mode = "blend";
+        CFG.cfgV = 2;
     }
     function saveCfg() {
         try {
@@ -80,11 +86,20 @@
         for (var i = 0; i < ends.length; i++) if (m < ends[i]) return i;
         return ends.length;
     }
+    // Rank bands (pipeline/queries.py BANDS): each has its own rec/recp tables built from that band's
+    // matches, because items really do perform differently by rank (~2 pp, research/rank_consistency.py).
+    function bandId() {
+        var b = CFG.rank;
+        if (!b || !DATA.bands || !DATA.bands[b]) b = (DATA.meta && DATA.meta.default_band) || "mid";
+        return b;
+    }
+    function bandData() { return (DATA.bands && DATA.bands[bandId()]) || { rec: DATA.rec || {}, recp: DATA.recp || {} }; }
     var _phaseIdx = {};
     function phaseStats(hero, ph) {
-        var key = hero + ":" + ph;
+        var key = bandId() + ":" + hero + ":" + ph;
         if (_phaseIdx[key]) return _phaseIdx[key];
-        var out = {}, rows = DATA.recp && DATA.recp[String(hero)] && DATA.recp[String(hero)][ph];
+        var recp = bandData().recp;
+        var out = {}, rows = recp && recp[String(hero)] && recp[String(hero)][ph];
         if (rows) for (var i = 0; i < rows.length; i++) out[String(rows[i][0])] = [rows[i][1] / 1000, rows[i][2] / 1000];
         _phaseIdx[key] = out;
         return out;
@@ -422,12 +437,18 @@
     // "value" = model win-value (impact, but noisier); "balanced" = popularity primary
     // with a win-value tilt. Matchup lift is added as a situational adjustment in all.
     function modeScore(val, pop, matchup, cost) {
-        if (CFG.mode === "value") return (val - 0.5) + 0.4 * matchup;      // val is ~0.45-0.57
+        // val-0.5 is a reliability-weighted lift (~±0.03); BLEND_W brings it to the 0..1 scale of the
+        // pick rate and of the matchup / synergy / tier terms, which otherwise drown it out.
+        if (CFG.mode === "value") return BLEND_W * (val - 0.5) + 0.4 * matchup;
         // Efficiency: win-value impact PER soul (scaled to the pop/value range so the
         // situational lifts stay comparable). Favours cost-efficient picks over raw impact.
         if (CFG.mode === "efficiency") return (val - 0.5) / Math.max(cost || 1, 1) * 4000 + 0.4 * matchup;
-        return pop + 0.4 * matchup;                                        // popular (default)
+        if (CFG.mode === "popular") return pop + 0.4 * matchup;
+        return pop + BLEND_W * (val - 0.5) + 0.4 * matchup;                 // blend (default)
     }
+    // Blend weight from research/sim.py: pick + W*value was most robust at W~16-32 (pure popularity went
+    // below random when the community misvalues items; pure value suffers on rare heroes).
+    var BLEND_W = 20;
     var SYN_WEIGHT = 0.8;   // build-so-far synergy strength (comparable to popularity term)
     // Enemy-item counters: DATA.ctr[enemyItemId][myItemId] = duration-stratified winner build-rate
     // lift when the enemy team owns enemyItemId (baked in 13_export.py from real match data — no
@@ -436,7 +457,8 @@
     // items that winners itemize into vs THEIR build float up. Lifts are ~0.04-0.07 (like vs/syn).
     var CTR = DATA.ctr || {};
     var CTR_WEIGHT = 1.0;
-    var TIMING_WEIGHT = 1.5;   // buy-time lift (~±0.03) -> comparable to the matchup/synergy terms
+    var TIMING_WEIGHT = 1.5;   // buy-time lift (~±0.03) -> comparable to the matchup/synergy terms (popular mode)
+    var TIMING_WEIGHT_VAL = 10;   // value/blend modes: same units as their lift term, half its weight (noisier)
     var _lastCand = [];     // full score-sorted candidate list from the last computeRecs (for Soul-holding)
     // Soul holding: preview the best items in the item TIER you should be saving toward.
     // Target = max of a souls-based tier (<1600->T2, <3200->T3, 6400+->T4) and a time-based
@@ -460,7 +482,7 @@
         return { tier: tt, items: out };
     }
     function computeRecs(hero, souls, owned, enemies, tSec) {
-        var list = DATA.rec[String(hero)]; if (!list) return [];
+        var list = bandData().rec[String(hero)]; if (!list) return [];
         var vsH = (DATA.vs && DATA.vs[String(hero)]) || {};
         var synH = (DATA.syn && DATA.syn[String(hero)]) || null;
         var imbH = (DATA.imbue && DATA.imbue[String(hero)]) || null;   // item -> ability slot
@@ -475,7 +497,8 @@
         var synDrivers = [];
         if (synH) for (var on in owned) if (owned.hasOwnProperty(on)) { var oid = nameToId(on); if (oid && synH[oid]) synDrivers.push(oid); }
         var covered = coveredComponents(owned);   // component ids folded into an owned upgrade -> strike them too
-        var phS = phaseStats(hero, flowPhase(tSec));
+        var phS = phaseStats(hero, flowPhase(tSec)), phHas = false;
+        for (var pk in phS) if (phS.hasOwnProperty(pk)) { phHas = true; break; }
         var cand = [];
         for (var k = 0; k < list.length; k++) {
             var id = String(list[k][0]), meta = DATA.items[id];
@@ -489,12 +512,14 @@
             var val = list[k][1], pop = (list[k].length > 2 ? list[k][2] : 0);
             var ph = phS[id];                                   // this phase's lift/pick beats the all-game average
             if (ph) { val = 0.5 + ph[0] * ph[1] / (ph[1] + 0.05); pop = ph[1]; }   // lift trusted by adoption (build.py reliability)
+            else if (phHas) pop = 0;   // phase table exists but strong players don't buy this now: don't fall
+                                       // back to the all-game pick (early staples would top the 40-min list)
             var tm = timingInfo(hero, id, tSec);
             var eff = effectiveCost(meta, owned);   // discount for owned components
             // no flush/late tier-bias in Efficiency mode — it already accounts for cost. With phase data
             // the tier shift over the game is already in pick rates, so the affluence proxy is halved.
             var tierBias = (CFG.mode === "efficiency") ? 0 : (ph ? 0.5 : 1) * TIER_W * aff01 * (meta.t - 2);
-            var timeAdj = tm ? TIMING_WEIGHT * tm.lift : 0;
+            var timeAdj = tm ? (CFG.mode === "popular" ? TIMING_WEIGHT : TIMING_WEIGHT_VAL) * tm.lift : 0;
             cand.push({ id: id, name: meta.n, cost: eff, fullCost: meta.c, tier: meta.t, slot: meta.s, icon: meta.ic || "", aff: true, syn: syn, ctr: ctr, pop: pop, late: !!(tm && tm.late), until: tm ? tm.until : null, imb: (imbH ? (imbH[id] || 0) : 0), score: modeScore(val, pop, w * adj, eff) + SYN_WEIGHT * syn + CTR_WEIGHT * ctr + tierBias + timeAdj });
         }
         cand.sort(function (a, b) { return b.score - a.score; });   // re-rank by mode + matchup
@@ -848,7 +873,12 @@
         css(_cfgBox, { visibility: _cfgShown ? "visible" : "collapse" });
         if (!_cfgShown) return;
         var hdr = $.CreatePanel("Label", _cfgBox, ""); hdr.text = "SETTINGS"; css(hdr, { color: PAL.faint, fontSize: "12px", fontFamily: PAL.font, letterSpacing: "2px", marginBottom: "5px" });
-        knobRow(_cfgBox, "Sort", [{ t: "Popular", v: "popular" }, { t: "Win-val", v: "value" }, { t: "Effic.", v: "efficiency" }], CFG.mode, function (v) { CFG.mode = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
+        knobRow(_cfgBox, "Sort", [{ t: "Blend", v: "blend" }, { t: "Popular", v: "popular" }, { t: "Win-val", v: "value" }, { t: "Effic.", v: "efficiency" }], CFG.mode, function (v) { CFG.mode = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
+        knobRow(_cfgBox, "My rank", [{ t: "Low", v: "low" }, { t: "Mid", v: "mid" }, { t: "High", v: "high" }, { t: "Pro", v: "pro" }], bandId(), function (v) { CFG.rank = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
+        var bandName = "";
+        var bl = (DATA.meta && DATA.meta.bands) || [];
+        for (var bi = 0; bi < bl.length; bi++) if (bl[bi].id === bandId()) bandName = bl[bi].name;
+        if (bandName) { var bn = $.CreatePanel("Label", _cfgBox, ""); bn.text = "data: " + bandName; css(bn, { color: PAL.faint, fontSize: "12px", fontFamily: PAL.font, marginLeft: "70px", marginBottom: "4px" }); }
         knobRow(_cfgBox, "Items", [{ t: "5", v: 5 }, { t: "8", v: 8 }, { t: "10", v: 10 }, { t: "15", v: 15 }], CFG.count, function (v) { CFG.count = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         switchRow(_cfgBox, "Pct", CFG.showPct, function (v) { CFG.showPct = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         switchRow(_cfgBox, "Click-buy", CFG.buy, function (v) { CFG.buy = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
@@ -907,7 +937,7 @@
         var holdIds = {};
         for (var i = 0; i < hold.items.length; i++) holdIds[hold.items[i].id] = 1;
         // --- signature of the VISIBLE result; identical => leave the DOM alone (no stutter) ---
-        var parts = ["" + hero, "C" + CFG.count + (CFG.showPct ? 1 : 0) + (CFG.holding ? 1 : 0) + (CFG.skills ? 1 : 0) + (CFG.buy ? 1 : 0) + (CFG.counters ? 1 : 0) + CFG.mode];
+        var parts = ["" + hero, "C" + CFG.count + (CFG.showPct ? 1 : 0) + (CFG.holding ? 1 : 0) + (CFG.skills ? 1 : 0) + (CFG.buy ? 1 : 0) + (CFG.counters ? 1 : 0) + CFG.mode + bandId()];
         var probe = 0;
         for (var p = 0; p < recs.length && probe < CFG.count; p++) {
             var it = recs[p]; if (holdIds[it.id]) continue;

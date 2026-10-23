@@ -5,8 +5,22 @@ from api import get
 
 # Rank ladder used for shrinkage: PRO estimates lean on HIGH, HIGH on ALL.
 # Badge = tier*10 + subtier; 9x = Phantom, 10x = Ascendant, 11x = Eternus.
-LEVELS = {"all": None, "high": 90, "pro": 100}
+LEVELS = {                      # (min badge, max badge)
+    "all": (None, None), "high": (90, None), "pro": (100, None),
+    "r_low": (None, 39), "r_mid": (40, 69), "r_upper": (70, 89),
+}
 VS_LEVELS = ("all", "high")     # per-enemy splits are too thin at PRO
+# Rank bands the player picks in the mod; each is a shrinkage ladder ending at that band's matches.
+# Real pro-vs-all item lifts differ by ~2.2 pp (research/rank_consistency.py), so a player should get
+# tables from their own rank, not the pros'. Shares of matches since 2026-09-29: 34/30/20/16%.
+BANDS = {
+    "low": ("all", "r_low"),            # Initiate - Alchemist
+    "mid": ("all", "r_mid"),            # Arcanist - Emissary
+    "high": ("all", "r_upper"),         # Archon - Oracle
+    "pro": ("all", "high", "pro"),      # Phantom+ (leaning on Ascendant+)
+}
+BAND_NAMES = {"low": "Initiate-Alchemist", "mid": "Arcanist-Emissary", "high": "Archon-Oracle", "pro": "Phantom+"}
+DEFAULT_BAND = "mid"            # the median player is a Ritualist
 
 
 def active_heroes():
@@ -29,7 +43,8 @@ class Q:
         self.since = since
 
     def _f(self, level):
-        return {"min_unix_timestamp": self.since, "min_average_badge": LEVELS[level]}
+        lo, hi = LEVELS[level]
+        return {"min_unix_timestamp": self.since, "min_average_badge": lo, "max_average_badge": hi}
 
     def hero_stats(self, level):
         return get("/v1/analytics/hero-stats", **self._f(level))

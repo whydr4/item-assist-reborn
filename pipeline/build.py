@@ -19,8 +19,9 @@ import queries
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 GAME = r"C:\Program Files (x86)\Steam\steamapps\common\Deadlock\game\citadel"
-LADDER = ("all", "high", "pro")
-K_WR = 150          # pseudo-matches pulling a win-rate lift toward the broader level
+LADDER = ("all", "high", "pro")   # shared tables (next item, timing, matchups) lean on strong players
+K_WR = 500          # pseudo-matches pulling a win-rate lift toward the broader level; empirical Bayes
+                    # 0.25 / tau^2 with tau ~2.2 pp real rank difference (research/rank_consistency.py)
 K_PICK = 40         # pseudo-games pulling a pick rate toward the broader level
 PHASE_END_MIN = (9, 20, 30, 999)   # item-flow columns for normal mode
 TIMING_BIN_MIN = 5
@@ -34,10 +35,10 @@ NEXT_TOP, SYN_TOP = 6, 6
 sys.stdout.reconfigure(encoding="utf-8")
 
 
-def ladder_shrink(obs, k, prior=0.0):
+def ladder_shrink(obs, k, prior=0.0, ladder=LADDER):
     """obs: {level: (value, n)}. Sequentially update prior with each level's value weighted by n."""
     est = prior
-    for lv in LADDER:
+    for lv in ladder:
         if lv in obs:
             v, n = obs[lv]
             if n > 0:
@@ -77,7 +78,7 @@ def client_version():
 
 
 # ---------------------------------------------------------------- per-hero signals
-def phase_values(q, hero, item_tier):
+def phase_values(q, hero, item_tier, ladder=LADDER):
     """From item-flow nodes: per phase, net-worth-adjusted lift and pick rate per item.
 
     Lift is measured against items of the SAME tier bought in the same phase: even after the
@@ -85,7 +86,7 @@ def phase_values(q, hero, item_tier):
     enough to afford it), and the real in-shop choice is between items of one tier anyway."""
     lift_obs = defaultdict(dict)     # (col, item) -> {lv: (lift, n)}
     pick_obs = defaultdict(dict)
-    for lv in LADDER:
+    for lv in ladder:
         f = q.flow(hero, lv)
         reached = f["summary_reached_per_column"]
         acc = defaultdict(lambda: [0.0, 0])
@@ -106,19 +107,20 @@ def phase_values(q, hero, item_tier):
     phases = [dict() for _ in range(4)]
     for key in set(lift_obs) | set(pick_obs):
         c, i = key
-        phases[c][i] = (ladder_shrink(lift_obs.get(key, {}), K_WR), ladder_shrink(pick_obs.get(key, {}), K_PICK))
+        phases[c][i] = (ladder_shrink(lift_obs.get(key, {}), K_WR, ladder=ladder),
+                        ladder_shrink(pick_obs.get(key, {}), K_PICK, ladder=ladder))
     return phases
 
 
-def overall_pick(q, hero, hero_matches):
+def overall_pick(q, hero, hero_matches, ladder=LADDER):
     obs = defaultdict(dict)
-    for lv in LADDER:
+    for lv in ladder:
         hm = hero_matches[lv].get(hero, 0)
         if not hm:
             continue
         for r in q.items(hero, lv):
             obs[r["item_id"]][lv] = (min(1.0, r["matches"] / hm), hm)
-    return {i: ladder_shrink(o, K_PICK) for i, o in obs.items()}
+    return {i: ladder_shrink(o, K_PICK, ladder=ladder) for i, o in obs.items()}
 
 
 def transitions(q, hero):
@@ -236,6 +238,25 @@ def ability_order(q, hero, slot_of):
     return [slot_of[a] for a in best["abilities"]]
 
 
+def band_tables(q, hid, item_tier, hero_matches, ladder, items):
+    """rec / recp / overall pick for one rank band (its own shrinkage ladder)."""
+    phases = phase_values(q, hid, item_tier, ladder)
+    pick = overall_pick(q, hid, hero_matches, ladder)
+    rec = []
+    for i in set(pick) | {i for ph in phases for i in ph}:
+        if str(i) not in items:
+            continue
+        ws = [(ph[i][0], ph[i][1]) for ph in phases if i in ph]
+        wsum = sum(p for _, p in ws)
+        val = 0.5 + (sum(l * reliability(p) * p for l, p in ws) / wsum if wsum else 0.0)
+        rec.append([i, round(val, 4), r3(pick.get(i, 0.0))])
+    rec.sort(key=lambda r: -r[1])
+    recp = [[[i, round(l * 1000), round(p * 1000)] for i, (l, p) in sorted(ph.items(), key=lambda kv: -kv[1][1])
+             if str(i) in items and p >= 0.01][:30]
+            for ph in phases]
+    return rec, recp, pick
+
+
 # ---------------------------------------------------------------- static metadata
 def panorama_index():
     p = os.path.join(ROOT, "data", "game_panorama_images.txt")
@@ -280,9 +301,10 @@ def main():
             items[iid] = {"n": it["name"], "c": it["cost"], "t": it["item_tier"], "s": it.get("item_slot_type"), "ic": ic or ""}
     item_tier = {int(k): v["t"] for k, v in items.items()}
 
-    hero_matches = {lv: {r["hero_id"]: r["matches"] for r in q.hero_stats(lv)} for lv in LADDER}
+    hero_matches = {lv: {r["hero_id"]: r["matches"] for r in q.hero_stats(lv)} for lv in queries.LEVELS}
 
-    out = {"meta": {}, "heroes": {}, "heroIcon": {}, "items": items, "rec": {}, "recp": {}, "next": {},
+    out = {"meta": {}, "heroes": {}, "heroIcon": {}, "items": items,
+           "bands": {b: {"rec": {}, "recp": {}, "games": {}} for b in queries.BANDS}, "next": {},
            "tm": {}, "vs": {}, "syn": {}, "ctr": old.get("ctr", {}), "imbue": {}}
     extra = {"byName": {}, "abilityOrder": {}, "abilityIcon": {}, "tips": {}}
     report = []
@@ -310,24 +332,15 @@ def main():
         if key in old.get("tips", {}):
             extra["tips"][key] = old["tips"][key]
 
-        phases = phase_values(q, hid, item_tier)
-        pick = overall_pick(q, hid, hero_matches)
-        rec = []
-        for i in set(pick) | {i for ph in phases for i in ph}:
-            if str(i) not in items:
-                continue
-            ws = [(ph[i][0], ph[i][1]) for ph in phases if i in ph]
-            wsum = sum(p for _, p in ws)
-            val = 0.5 + (sum(l * reliability(p) * p for l, p in ws) / wsum if wsum else 0.0)
-            rec.append([i, round(val, 4), r3(pick.get(i, 0.0))])
-        rec.sort(key=lambda r: -r[1])
-        out["rec"][key] = rec
-        out["recp"][key] = [
-            [[i, round(l * 1000), round(p * 1000)] for i, (l, p) in sorted(ph.items(), key=lambda kv: -kv[1][1])
-             if str(i) in items and p >= 0.01][:30]
-            for ph in phases]
+        picks = {}
+        for band, ladder in queries.BANDS.items():
+            rec, recp, picks[band] = band_tables(q, hid, item_tier, hero_matches, ladder, items)
+            bt = out["bands"][band]
+            bt["rec"][key], bt["recp"][key] = rec, recp
+            bt["games"][key] = hero_matches[ladder[-1]].get(hid, 0)
 
-        relevant = {i for i, p in pick.items() if p >= RELEVANT_PICK and str(i) in items}
+        # shared tables cover items that matter in ANY band
+        relevant = {i for pk in picks.values() for i, p in pk.items() if p >= RELEVANT_PICK and str(i) in items}
         nxt, syn = {}, {}
         for a_id, lst in transitions(q, hid).items():
             if a_id not in relevant:
@@ -349,19 +362,26 @@ def main():
         out["vs"][key] = matchups(q, hid, [e for e in hero_ids if e != hid], relevant)
 
         names = lambda lst: ", ".join(f"{items[str(r[0])]['n']} ({(r[1] - 0.5) * 100:+.1f}%, pick {r[2] * 100:.0f}%)" for r in lst)
-        report.append(f"{h['name']} [pro {hero_matches['pro'].get(hid, 0)} / high {hero_matches['high'].get(hid, 0)} games]\n"
-                      f"  top value: {names(rec[:6])}\n"
-                      f"  top pick : {names(sorted(rec, key=lambda r: -r[2])[:6])}")
+        report.append(h["name"])
+        for band in queries.BANDS:
+            rec = out["bands"][band]["rec"][key]
+            report.append(f"  [{band}, {out['bands'][band]['games'][key]} games] value: {names(rec[:5])}\n"
+                          f"  {' ' * (len(band) + 2)}{' ' * len(str(out['bands'][band]['games'][key]))}        pick : "
+                          f"{names(sorted(rec, key=lambda r: -r[2])[:5])}")
         print(f"[{n_done}/{len(build_ids)}] {h['name']}", flush=True)
 
     out["meta"] = {
         "client_version": client_version(),
         "generated": time.strftime("%Y-%m-%d %H:%M", time.localtime()),
         "since": time.strftime("%Y-%m-%d", time.gmtime(run["since"])),
-        "badge_ladder": queries.LEVELS,
+        "badge_levels": queries.LEVELS,
+        "bands": [{"id": b, "name": queries.BAND_NAMES[b], "ladder": list(l)} for b, l in queries.BANDS.items()],
+        "default_band": queries.DEFAULT_BAND,
+        "k_wr": K_WR,
         "phase_end_min": list(PHASE_END_MIN[:3]),
         "timing_bin_min": TIMING_BIN_MIN,
-        "note": ("rec[hero]=[item, 0.5+net-worth-adjusted lift, pro pick rate]; recp[hero][phase]=[item, lift*1000, pick*1000]; "
+        "note": ("bands[band].rec[hero]=[item, 0.5+net-worth-adjusted lift*reliability, pick rate]; "
+                 "bands[band].recp[hero][phase]=[item, lift*1000, pick*1000]; bands[band].games[hero]=matches; "
                  "next[hero][owned]=[item, lift*1000, share*1000]; tm[hero][item]=[good_until_min, lift*1000 per bin]; "
                  "vs[hero][enemy][item]=lift; syn from next; ctr/imbue/tips carried over from 6635 data"),
     }
