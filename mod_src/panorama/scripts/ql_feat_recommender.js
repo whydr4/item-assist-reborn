@@ -13,17 +13,52 @@
     if (typeof QOL_REC_DATA === "undefined") return;
     var DATA = QOL_REC_DATA;
 
-    // Reverse lookup: item display-name (lowercased) -> id. Owned items are read from
-    // the shop BY NAME; synergy (syn) is keyed by item id, so we map owned names -> ids.
-    var _nameToId = null;
-    function nameToId(name) {
-        if (!_nameToId) {
-            _nameToId = {};
-            if (DATA.items) for (var id in DATA.items) if (DATA.items.hasOwnProperty(id)) {
-                var n = DATA.items[id] && DATA.items[id].n; if (n) _nameToId[String(n).toLowerCase()] = id;
-            }
+    // ---- NAMES IN THE CLIENT'S LANGUAGE ----------------------------------------
+    // The HUD shows hero and item names in the client's language, and everything we read from it
+    // (hero header, owned items, purchase feed, click-to-buy) goes BY NAME. DATA.loc[lang] =
+    // {h: {heroId: name}, i: {itemId: name}} comes from the game's own localization files
+    // (pipeline/build.py), so every language maps back to the same ids; English DATA.items/heroes
+    // stay the fallback. _uiLang is learned from the first shop label that is unique to one language
+    // and is used to DISPLAY names the way the game does.
+    function norm(s) { return String(s || "").toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""); }
+    var _nameToId = null, _nameLang = null, _uiLang = null;
+    function buildNameIndex() {
+        _nameToId = {}; _nameLang = {};
+        function add(name, id, lang) {
+            var k = norm(name); if (!k) return;
+            _nameToId[k] = String(id);
+            _nameLang[k] = (_nameLang[k] === undefined || _nameLang[k] === lang) ? lang : "";   // "" = shared by languages
         }
-        return name ? _nameToId[String(name).toLowerCase()] : undefined;
+        if (DATA.items) for (var id in DATA.items) if (DATA.items.hasOwnProperty(id) && DATA.items[id].n) add(DATA.items[id].n, id, "english");
+        var loc = DATA.loc || {};
+        for (var lang in loc) if (loc.hasOwnProperty(lang) && loc[lang].i)
+            for (var iid in loc[lang].i) if (loc[lang].i.hasOwnProperty(iid)) add(loc[lang].i[iid], iid, lang);
+    }
+    function nameToId(name) {
+        if (!_nameToId) buildNameIndex();
+        if (!name) return undefined;
+        var k = norm(name), id = _nameToId[k];
+        if (id && !_uiLang && _nameLang[k] && _nameLang[k] !== "english") _uiLang = _nameLang[k];
+        return id;
+    }
+    function itemName(id) {
+        var l = _uiLang && DATA.loc && DATA.loc[_uiLang];
+        return (l && l.i && l.i[String(id)]) || (DATA.items[String(id)] && DATA.items[String(id)].n) || String(id);
+    }
+    // Learn the client language from the shop's own item captions as soon as the shop opens, so the
+    // list shows the game's names before anything is bought. A few cheap tries, then give up (English).
+    var _langTries = 0;
+    function detectUiLang(shop) {
+        if (_uiLang || _langTries >= 5 || !shop || !shop.FindChildrenWithClassTraverse) return;
+        _langTries++;
+        var l = shop.FindChildrenWithClassTraverse("modName") || [];
+        for (var i = 0; i < l.length && i < 40 && !_uiLang; i++) { try { nameToId(l[i].text); } catch (e) {} }
+    }
+    // canonical (English, lowercased) key for an item name read from the HUD in any language —
+    // owned/component bookkeeping below is keyed by DATA.items[id].n
+    function canonItem(name) {
+        var id = nameToId(name);
+        return id && DATA.items[id] ? String(DATA.items[id].n).toLowerCase() : norm(name);
     }
 
     // Component coverage: buying an upgrade (e.g. Capacitor) folds in its component items
@@ -115,25 +150,46 @@
     }
 
     // ---- HERO AUTO-DETECT (from the shop's own header labels) ---------------
-    var _heroDisplays = null, _diagDumped = false;
-    function heroDisplaysSorted() {
-        if (_heroDisplays) return _heroDisplays;
-        _heroDisplays = [];
-        if (DATA.heroes) for (var id in DATA.heroes) if (DATA.heroes.hasOwnProperty(id)) _heroDisplays.push([DATA.heroes[id], id]);
-        _heroDisplays.sort(function (a, b) { return b[0].length - a[0].length; });
-        return _heroDisplays;
+    // Hero names in every language: full names first (longest wins), then a STEM of the longest word
+    // so declined forms still match ("Скиталец" -> "скитал" finds "Скитальца").
+    var _heroFull = null, _heroStem = null, _diagDumped = false, _heroDiag = [];
+    function heroIndex() {
+        if (_heroFull) return;
+        _heroFull = []; _heroStem = [];
+        var seen = {};
+        function add(name, id) {
+            var k = norm(name); if (!k || seen[k + "|" + id]) return; seen[k + "|" + id] = 1;
+            _heroFull.push([k, id]);
+            var words = k.split(" "), w = "";
+            for (var i = 0; i < words.length; i++) if (words[i].length > w.length) w = words[i];
+            var stem = w.length >= 6 ? w.slice(0, -2) : w;
+            if (stem.length >= 4) _heroStem.push([stem, id]);
+        }
+        if (DATA.heroes) for (var id in DATA.heroes) if (DATA.heroes.hasOwnProperty(id)) add(DATA.heroes[id], id);
+        var loc = DATA.loc || {};
+        for (var lang in loc) if (loc.hasOwnProperty(lang) && loc[lang].h)
+            for (var hid in loc[lang].h) if (loc[lang].h.hasOwnProperty(hid)) add(loc[lang].h[hid], hid);
+        var byLen = function (a, b) { return b[0].length - a[0].length; };
+        _heroFull.sort(byLen); _heroStem.sort(byLen);
     }
     function scanTextForDisplay(txt) {
         if (!txt) return null;
-        var s = String(txt).toLowerCase(), d = heroDisplaysSorted();   // labels are UPPERCASE (INFERNUS)
-        for (var i = 0; i < d.length; i++) if (s.indexOf(d[i][0].toLowerCase()) !== -1) return parseInt(d[i][1], 10);
+        heroIndex();
+        var s = norm(txt), i;   // labels may be UPPERCASE (INFERNUS)
+        for (i = 0; i < _heroFull.length; i++) if (s.indexOf(_heroFull[i][0]) !== -1) return parseInt(_heroFull[i][1], 10);
+        for (i = 0; i < _heroStem.length; i++) if (s.indexOf(_heroStem[i][0]) !== -1) return parseInt(_heroStem[i][1], 10);
         return null;
     }
+    // Labels in the shop that name the hero. English UIs say "Recommended" / "X's Build"; other
+    // languages don't, so a label is also accepted when it IS a hero name (header captions).
     function deepLabelScan(p, depth, diag) {
         if (!p || depth > 30) return null;
         var t = null; try { t = p.text; } catch (e) {}
-        if (t && (t.indexOf("Recommended") !== -1 || t.indexOf(" Build") !== -1 || t.indexOf("’s ") !== -1 || t.indexOf("'s ") !== -1)) {
-            var id = scanTextForDisplay(t); if (id) return id;
+        if (t) {
+            var en = (t.indexOf("Recommended") !== -1 || t.indexOf(" Build") !== -1 || t.indexOf("’s ") !== -1 || t.indexOf("'s ") !== -1);
+            var id = scanTextForDisplay(t);
+            if (id && (en || norm(t).length <= 40)) return id;     // short caption with a hero name, any language
+            if (diag && id && _heroDiag.length < 6) _heroDiag.push(String(t).substr(0, 40));
         }
         var kids = (p.Children ? p.Children() : []) || [];
         for (var i = 0; i < kids.length; i++) { var r = deepLabelScan(kids[i], depth + 1, diag); if (r) return r; }
@@ -145,7 +201,12 @@
         if (hdr) { var hid = scanTextForDisplay(hdr.text); if (hid) return hid; }
         var id = deepLabelScan(shop, 0, false);
         if (id) return id;
-        if (!_diagDumped) { _diagDumped = true;  deepLabelScan(shop, 0, true); }
+        if (!_diagDumped) {   // once: remember what the shop header actually says, shown while calibrating
+            _diagDumped = true;
+            var h = ""; try { h = hdr ? String(hdr.text) : "(no HeroFavoritesHeaderLabel)"; } catch (e) {}
+            _heroDiag = ["hdr: " + h.substr(0, 40)];
+            deepLabelScan(shop, 0, true);
+        }
         return null;
     }
     // Enemy comp: top bar groups players by team (CitadelHudTopBarTeam); each player's
@@ -309,7 +370,7 @@
                 // mod_view scan). We union into the SAME _ownedAccum the tab scan uses (accumulate-only,
                 // reset on hero change). Limitation (same as the tab scan today): it's a purchase STREAM,
                 // so sold items stay struck until hero change; consumed components read as owned like now.
-                var lc = item.toLowerCase();
+                var lc = canonItem(item);   // feed shows the client's language; owned keys are English
                 if (!_ownedAccum[lc]) { _ownedAccum[lc] = 1; ownedAdded++; }
             }
         }
@@ -363,7 +424,7 @@
             if (own) nOwn++; if (isComp) nComp++; if (vis) nVis++;
             if (!(own || isComp || vis)) continue;               // accumulate-only: never remove here
             var nms = e.FindChildrenWithClassTraverse("modName") || [];
-            for (var k = 0; k < nms.length; k++) { var t = ""; try { t = String(nms[k].text || "").replace(/^\s+|\s+$/g, ""); } catch (x) {} if (t) _ownedAccum[t.toLowerCase()] = 1; }
+            for (var k = 0; k < nms.length; k++) { var t = ""; try { t = String(nms[k].text || "").replace(/^\s+|\s+$/g, ""); } catch (x) {} if (t) _ownedAccum[canonItem(t)] = 1; }
         }
         if (_ownedDiagN < 8) { _ownedDiagN++;  }
         return _ownedAccum;
@@ -388,16 +449,16 @@
     // "Activated" event a real left-click sends -> native buy (QoLLock uses this dispatch).
     // All four category lists (Weapon/Armor/Tech/All) are persistent siblings, so the panel
     // is findable regardless of the active tab; prefer a visible copy (active tab) if present.
-    function findModView(shop, name) {
+    function findModView(shop, id) {   // match by item id: shop labels are in the client's language
         if (!shop || !shop.FindChildrenWithClassTraverse) return null;
         var entries = shop.FindChildrenWithClassTraverse("mod_view") || [];
-        var target = String(name).replace(/^\s+|\s+$/g, "").toLowerCase(), vis = null, any = null;
+        var target = String(id), vis = null, any = null;
         for (var i = 0; i < entries.length; i++) {
             var e = entries[i]; if (!e.FindChildrenWithClassTraverse) continue;
             var nms = e.FindChildrenWithClassTraverse("modName") || [];
             for (var k = 0; k < nms.length; k++) {
-                var t = ""; try { t = String(nms[k].text || "").replace(/^\s+|\s+$/g, "").toLowerCase(); } catch (x) {}
-                if (t && t === target) { any = any || e; try { if (e.visible) vis = e; } catch (x) {} break; }
+                var t = ""; try { t = String(nms[k].text || ""); } catch (x) {}
+                if (t && nameToId(t) === target) { any = any || e; try { if (e.visible) vis = e; } catch (x) {} break; }
             }
         }
         return vis || any;
@@ -414,7 +475,7 @@
         if (!it) return;
         var root = hudRoot(), shop = shopIfOpen(root);
         if (!shop) {  return; }
-        var mv = findModView(shop, it.name);
+        var mv = findModView(shop, it.id);
         if (mv) { _activateBuy(mv, it.name); return; }
         // Not rendered in the active tab: its modName text only binds when its category tab is
         // shown. Switch to that tab (activate the nav button), then retry the find + buy once.
@@ -424,7 +485,7 @@
         try { $.DispatchEvent("Activated", nav, "mouse"); } catch (e) {}
         $.Schedule(0.15, function () {
             var s = shopIfOpen(hudRoot()); if (!s) return;
-            var mv2 = findModView(s, it.name);
+            var mv2 = findModView(s, it.id);
             if (mv2) _activateBuy(mv2, it.name);
         });
     }
@@ -520,7 +581,7 @@
             // the tier shift over the game is already in pick rates, so the affluence proxy is halved.
             var tierBias = (CFG.mode === "efficiency") ? 0 : (ph ? 0.5 : 1) * TIER_W * aff01 * (meta.t - 2);
             var timeAdj = tm ? (CFG.mode === "popular" ? TIMING_WEIGHT : TIMING_WEIGHT_VAL) * tm.lift : 0;
-            cand.push({ id: id, name: meta.n, cost: eff, fullCost: meta.c, tier: meta.t, slot: meta.s, icon: meta.ic || "", aff: true, syn: syn, ctr: ctr, pop: pop, late: !!(tm && tm.late), until: tm ? tm.until : null, imb: (imbH ? (imbH[id] || 0) : 0), score: modeScore(val, pop, w * adj, eff) + SYN_WEIGHT * syn + CTR_WEIGHT * ctr + tierBias + timeAdj });
+            cand.push({ id: id, name: itemName(id), cost: eff, fullCost: meta.c, tier: meta.t, slot: meta.s, icon: meta.ic || "", aff: true, syn: syn, ctr: ctr, pop: pop, late: !!(tm && tm.late), until: tm ? tm.until : null, imb: (imbH ? (imbH[id] || 0) : 0), score: modeScore(val, pop, w * adj, eff) + SYN_WEIGHT * syn + CTR_WEIGHT * ctr + tierBias + timeAdj });
         }
         cand.sort(function (a, b) { return b.score - a.score; });   // re-rank by mode + matchup
         _lastCand = cand;                                            // for Soul-holding preview
@@ -611,16 +672,17 @@
         gold: "#FFED79",            // goldColor (souls)
         accent: "#5FE69E",          // brandGreen — the settings-menu toggle green (was blue)
         enemy: "#FF410D",           // colorEnemy
-        panelBg: "#0d1110f5",       // offBlack-ish
+        panelBg: "#B9AE90F2",       // paper tan under the backdrop texture: the dark text above must stay
+                                    // readable even if Valve renames the texture again (it did in 2026)
         border: "#5FE69E38",        // brandGreen hairline (subtle, ties to the accent)
         btn: "#2C2F28E6",           // dark gray — unselected buttons (readable on the paper bg)
         btnOn: "#3C9E6Acc",         // darker green for text-buttons (offWhite stays readable on it)
         switchOn: "#5FE69E"         // bright brandGreen for switch tracks (matches settings toggle)
     };
     // Deadlock's own shop backdrop texture (single url layer — Panorama's inline style parser
-    // rejects a multi-layer gradient()+url() string). It's a dark texture, so the panel's dark
-    // backgroundColor + this image read fine behind the content.
-    var SHOP_BG = 'url("s2r://panorama/images/shop/catalog/catalog_shop_generic_bg_psd.vtex")';
+    // rejects a multi-layer gradient()+url() string). catalog_shop_generic_bg was renamed to ..._bg2
+    // by client 6819; with the old path the panel fell back to a dark color and the text vanished.
+    var SHOP_BG = 'url("s2r://panorama/images/shop/catalog/catalog_shop_generic_bg2_psd.vtex")';
     var FLOAT_ID = "RecFloat";
     var _float = null, _title = null, _body = null, _cfgBox = null, _cfgShown = false, _helpShown = false;
     var _gearBtn = null, _rightGrp = null, _rule = null;
@@ -873,7 +935,7 @@
         css(_cfgBox, { visibility: _cfgShown ? "visible" : "collapse" });
         if (!_cfgShown) return;
         var hdr = $.CreatePanel("Label", _cfgBox, ""); hdr.text = "SETTINGS"; css(hdr, { color: PAL.faint, fontSize: "12px", fontFamily: PAL.font, letterSpacing: "2px", marginBottom: "5px" });
-        knobRow(_cfgBox, "Sort", [{ t: "Blend", v: "blend" }, { t: "Popular", v: "popular" }, { t: "Win-val", v: "value" }, { t: "Effic.", v: "efficiency" }], CFG.mode, function (v) { CFG.mode = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
+        knobRow(_cfgBox, "Sort", [{ t: "Blend", v: "blend" }, { t: "Pop", v: "popular" }, { t: "Value", v: "value" }, { t: "Eff", v: "efficiency" }], CFG.mode, function (v) { CFG.mode = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         knobRow(_cfgBox, "My rank", [{ t: "Low", v: "low" }, { t: "Mid", v: "mid" }, { t: "High", v: "high" }, { t: "Pro", v: "pro" }], bandId(), function (v) { CFG.rank = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         var bandName = "";
         var bl = (DATA.meta && DATA.meta.bands) || [];
@@ -915,6 +977,7 @@
                              // work when it's closed. The coach (shop-closed nudge) computes items via
                              // computeRecs directly and never touches this panel.
         var hero = _heroId, souls = getSouls(root), t = getGameTimeSec(root);
+        detectUiLang(shop);
         var owned = getOwnedNames(shop);
         var sig = Object.keys(owned).sort().join(",");
         if (sig !== _ownedSig) { _ownedSig = sig;  }
@@ -922,9 +985,16 @@
         if (!valid(_body)) return;
         // --- placeholder states (compute nothing heavy) ---
         if (!hero) {
-            if (_renderSig === "@calibrating" && _body.GetChildCount() > 0) return;
-            _renderSig = "@calibrating"; _body.RemoveAndDeleteChildren();
-            var c = $.CreatePanel("Label", _body, ""); c.text = "calibrating…"; css(c, { color: PAL.dim, fontSize: "16px", fontFamily: PAL.font }); return;
+            var diagSig = "@calibrating" + _heroDiag.join("|");
+            if (_renderSig === diagSig && _body.GetChildCount() > 0) return;
+            _renderSig = diagSig; _body.RemoveAndDeleteChildren();
+            var c = $.CreatePanel("Label", _body, ""); c.text = "calibrating…"; css(c, { color: PAL.dim, fontSize: "16px", fontFamily: PAL.font });
+            // what the hero detection saw — readable from a screenshot when a client/language breaks it
+            for (var di = 0; di < _heroDiag.length; di++) {
+                var dl = $.CreatePanel("Label", _body, ""); dl.text = _heroDiag[di];
+                css(dl, { color: PAL.faint, fontSize: "11px", fontFamily: PAL.font });
+            }
+            return;
         }
         // (enemy comp still conditions the ranking via matchup lifts; just not shown in-panel)
         var recs = computeRecs(hero, souls, owned, _enemies, t);
@@ -937,7 +1007,7 @@
         var holdIds = {};
         for (var i = 0; i < hold.items.length; i++) holdIds[hold.items[i].id] = 1;
         // --- signature of the VISIBLE result; identical => leave the DOM alone (no stutter) ---
-        var parts = ["" + hero, "C" + CFG.count + (CFG.showPct ? 1 : 0) + (CFG.holding ? 1 : 0) + (CFG.skills ? 1 : 0) + (CFG.buy ? 1 : 0) + (CFG.counters ? 1 : 0) + CFG.mode + bandId()];
+        var parts = ["" + hero + (_uiLang || ""), "C" + CFG.count + (CFG.showPct ? 1 : 0) + (CFG.holding ? 1 : 0) + (CFG.skills ? 1 : 0) + (CFG.buy ? 1 : 0) + (CFG.counters ? 1 : 0) + CFG.mode + bandId()];
         var probe = 0;
         for (var p = 0; p < recs.length && probe < CFG.count; p++) {
             var it = recs[p]; if (holdIds[it.id]) continue;

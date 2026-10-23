@@ -258,6 +258,40 @@ def band_tables(q, hid, item_tier, hero_matches, ladder, items):
 
 
 # ---------------------------------------------------------------- static metadata
+LOC_DIR = os.path.join(GAME, "resource", "localization")
+_KV = re.compile(r'^\s*"([^"]+)"\s+"([^"]*)"')
+_GENDER = re.compile(r"#\|[^|]*\|#")
+
+
+def localization(hero_class_to_id, item_class_to_id):
+    """{lang: {"h": {hero_id: name}, "i": {item_id: name}}} from the game's own name files.
+
+    The HUD shows names in the client's language, and the runtime finds the hero, owned items and
+    the purchase feed by those names — an English-only table left a Russian client on
+    "calibrating..." forever."""
+    out = {}
+    for kind, sub, ids in (("h", "citadel_gc_hero_names", hero_class_to_id), ("i", "citadel_gc_mod_names", item_class_to_id)):
+        folder = os.path.join(LOC_DIR, sub)
+        if not os.path.isdir(folder):
+            continue
+        for fn in os.listdir(folder):
+            m = re.match(rf"{sub}_(\w+)\.txt$", fn)
+            if not m:
+                continue
+            lang = m.group(1)
+            names = out.setdefault(lang, {"h": {}, "i": {}})[kind]
+            for ln in open(os.path.join(folder, fn), encoding="utf-8-sig", errors="replace"):
+                kv = _KV.match(ln)
+                if not kv:
+                    continue
+                key = kv.group(1).split(":")[0]          # hero_inferno:n -> hero_inferno
+                if key in ids:
+                    name = _GENDER.sub("", kv.group(2)).strip()
+                    if name:
+                        names[str(ids[key])] = name
+    return out
+
+
 def panorama_index():
     p = os.path.join(ROOT, "data", "game_panorama_images.txt")
     return [ln.strip() for ln in open(p, encoding="utf-8") if ln.strip()]
@@ -370,6 +404,8 @@ def main():
                           f"{names(sorted(rec, key=lambda r: -r[2])[:5])}")
         print(f"[{n_done}/{len(build_ids)}] {h['name']}", flush=True)
 
+    extra["loc"] = localization({heroes_a[h]["class_name"]: h for h in build_ids},
+                                {it["class_name"]: int(iid) for iid, it in shop.items() if iid in items})
     out["meta"] = {
         "client_version": client_version(),
         "generated": time.strftime("%Y-%m-%d %H:%M", time.localtime()),
