@@ -25,6 +25,7 @@ STATE_T = 540            # 9:00 sample
 WINDOW = (540, 1200)     # purchases between 9 and 20 min
 REL = 0.10               # +-10% vs enemy average net worth
 MIN_N = 40
+N_PERM = 30
 
 
 def load(path):
@@ -94,8 +95,9 @@ def main():
     w, wt = fit_winprob(matches, times)
 
     states = defaultdict(int)
-    rows = []        # (hero, item, tier, state, won, dW)
-    for m in matches:
+    rows = []        # (player, hero, item, tier, state, won, dW, match)
+    players = []     # (hero, state) per player-game
+    for mi, m in enumerate(matches):
         for p in m["p"]:
             mine = nw_at(p, STATE_T)
             enemy = [nw_at(q, STATE_T) for q in m["p"] if q["t"] != p["t"]]
@@ -105,6 +107,8 @@ def main():
             s = -1 if rel < -REL else (1 if rel > REL else 0)
             won = m["win"] == p["t"]
             states[(s, won)] += 1
+            pid = len(players)
+            players.append((p["h"], s))
             sign = 1 if p["t"] == 0 else -1
             seen = set()
             for iid, t_buy, _sold, _imb in p["it"]:
@@ -118,43 +122,34 @@ def main():
                     w0 = w(before, m["_diff"][before])
                     w1 = w(after, m["_diff"][after])
                     dw = sign * (w1 - w0)
-                rows.append((p["h"], iid, items[iid]["item_tier"], s, won, dw))
+                rows.append((pid, p["h"], iid, items[iid]["item_tier"], s, won, dw, mi))
 
     print("win rate by state at 9:00:", {
         {-1: "behind", 0: "even", 1: "ahead"}[s]: f"{states[(s, True)] / max(states[(s, True)] + states[(s, False)], 1) * 100:.0f}% "
         f"of {states[(s, True)] + states[(s, False)]}" for s in (-1, 0, 1)})
     print(f"{len(rows)} purchases 9-20 min")
 
-    # ---- 1. state interaction
-    cell = defaultdict(lambda: [0, 0])           # (hero, tier, item, state) -> wins, n
-    for h, i, t, s, won, _ in rows:
-        c = cell[(h, t, i, s)]
-        c[0] += won
-        c[1] += 1
-    base = defaultdict(lambda: [0, 0])
-    for (h, t, i, s), (wn, n) in cell.items():
-        b = base[(h, t, s)]
-        b[0] += wn
-        b[1] += n
-    zs, diffs, per_item = [], [], defaultdict(list)
-    for (h, t, i, s), (wn, n) in cell.items():
-        if s != -1:
-            continue
-        wa, na = cell.get((h, t, i, 1), (0, 0))
-        if n < MIN_N or na < MIN_N:
-            continue
-        lb = wn / n - base[(h, t, -1)][0] / base[(h, t, -1)][1]
-        la = wa / na - base[(h, t, 1)][0] / base[(h, t, 1)][1]
-        se = np.sqrt(0.25 / n + 0.25 / na)
-        zs.append((lb - la) / se)
-        diffs.append(lb - la)
-        per_item[i].append((lb - la, 1 / se ** 2))
-    zs, diffs = np.array(zs), np.array(diffs)
+    # ---- 1. state interaction, with a permutation null (states shuffled among players of a hero)
+    obs_sd, zs, diffs, per_item = interaction(rows, [s for _, s in players])
+    rng = np.random.default_rng(0)
+    by_hero = defaultdict(list)
+    for pid, (h, _) in enumerate(players):
+        by_hero[h].append(pid)
+    null = []
+    for _ in range(N_PERM):
+        st = [s for _, s in players]
+        for pids in by_hero.values():
+            perm = rng.permutation([st[p] for p in pids])
+            for p, s in zip(pids, perm):
+                st[p] = s
+        null.append(interaction(rows, st)[0])
+    null = np.array(null)
+    print(f"\n[1] behind-vs-ahead item lift (tier baseline without the item itself): {len(zs)} hero x item cells")
+    print(f"    sd(z) observed {obs_sd:.3f}; shuffled states {null.mean():.3f} +- {null.std():.3f} "
+          f"-> p = {(np.sum(null >= obs_sd) + 1) / (N_PERM + 1):.3f}")
     if len(zs):
-        se2 = np.mean(diffs ** 2 / np.maximum(zs ** 2, 1e-9))
-        print(f"\n[1] behind-vs-ahead item lift: {len(zs)} hero x item cells, sd(z) = {zs.std():.2f} "
-              f"(1.0 = noise), |z|>3: {np.mean(np.abs(zs) > 3) * 100:.1f}%, "
-              f"real interaction sd ~ {np.sqrt(max(diffs.var() - se2, 0)) * 100:.1f} pp")
+        excess = max(diffs.var() * (1 - (null.mean() / obs_sd) ** 2), 0)
+        print(f"    real interaction sd ~ {np.sqrt(excess) * 100:.1f} pp (excess over shuffled)")
         pooled = []
         for i, lst in per_item.items():
             wsum = sum(x[1] for x in lst)
@@ -168,41 +163,87 @@ def main():
         for est, z, nm, k in pooled[:8]:
             print(f"      {nm:24} {est * 100:+.1f} pp  z={z:+.1f}  heroes={k}")
 
-    # ---- 2. dW vs win rate
-    agg = defaultdict(lambda: [0, 0, 0.0, 0])     # item -> wins, n, dW sum, dW n
-    for h, i, t, s, won, dw in rows:
-        a = agg[i]
-        a[0] += won
-        a[1] += 1
-        if dw is not None:
-            a[2] += dw
-            a[3] += 1
-    tier_wr = defaultdict(lambda: [0, 0])
-    tier_dw = defaultdict(lambda: [0.0, 0])
-    for i, (wn, n, ds, dn) in agg.items():
-        t = items[i]["item_tier"]
-        tier_wr[t][0] += wn
-        tier_wr[t][1] += n
-        tier_dw[t][0] += ds
-        tier_dw[t][1] += dn
-    table = []
-    for i, (wn, n, ds, dn) in agg.items():
-        if n < 300 or dn < 300:
+    # ---- 2. dW vs win rate, both as within-hero lifts over tier-mates; split-half reliability
+    from scipy.stats import spearmanr
+    full = item_metrics(rows, items)
+    half = rng.random(len(matches)) < 0.5
+    a = item_metrics([r for r in rows if half[r[7]]], items)
+    b = item_metrics([r for r in rows if not half[r[7]]], items)
+    common = [i for i in full if i in a and i in b]
+    rel_wr = spearmanr([a[i][0] for i in common], [b[i][0] for i in common])[0]
+    rel_dw = spearmanr([a[i][1] for i in common], [b[i][1] for i in common])[0]
+    r_xy = spearmanr([full[i][0] for i in common], [full[i][1] for i in common])[0]
+    print(f"\n[2] {len(common)} items with n>=300 per half")
+    print(f"    split-half reliability: win-rate lift {rel_wr:.2f}, dW lift {rel_dw:.2f}")
+    print(f"    corr(win-rate lift, dW lift) = {r_xy:.2f}; corrected for noise = "
+          f"{r_xy / np.sqrt(max(rel_wr, 1e-3) * max(rel_dw, 1e-3)):.2f}")
+    table = sorted(((items[i]["name"], items[i]["item_tier"], full[i][2], full[i][0], full[i][1]) for i in common),
+                   key=lambda r: r[3] - r[4] * 2)
+    print("    biggest 'bought when already winning' gap (WR lift >> dW lift):")
+    for nm, t, n, x, y in table[::-1][:8]:
+        print(f"      T{t} {nm:24} WR {x * 100:+.1f} pp   dW {y * 100:+.2f} pp   n={n}")
+    print("    undervalued by WR (dW lift >> WR lift):")
+    for nm, t, n, x, y in table[:8]:
+        print(f"      T{t} {nm:24} WR {x * 100:+.1f} pp   dW {y * 100:+.2f} pp   n={n}")
+
+
+def interaction(rows, state_of):
+    """sd(z) of (lift when behind - lift when ahead) over hero x item cells; lift = item win rate
+    minus its tier-mates' (same hero, same state) win rate, the item itself left out."""
+    cell = defaultdict(lambda: [0, 0])
+    for pid, h, i, t, _s, won, _dw, _m in rows:
+        c = cell[(h, t, i, state_of[pid])]
+        c[0] += won
+        c[1] += 1
+    base = defaultdict(lambda: [0, 0])
+    for (h, t, i, s), (wn, n) in cell.items():
+        b = base[(h, t, s)]
+        b[0] += wn
+        b[1] += n
+    zs, diffs, per_item = [], [], defaultdict(list)
+    for (h, t, i, s), (wn, n) in cell.items():
+        if s != -1:
             continue
-        t = items[i]["item_tier"]
-        table.append((items[i]["name"], t, n, wn / n - tier_wr[t][0] / tier_wr[t][1], ds / dn - tier_dw[t][0] / tier_dw[t][1]))
-    if table:
-        wr = np.array([r[3] for r in table])
-        dw = np.array([r[4] for r in table])
-        from scipy.stats import spearmanr
-        print(f"\n[2] {len(table)} items: rank corr(win-rate lift, dW lift) = {spearmanr(wr, dw)[0]:.2f}")
-        table.sort(key=lambda r: r[3] - r[4] * 2)
-        print("    biggest 'bought when already winning' gap (WR lift >> dW lift):")
-        for nm, t, n, a, b in table[::-1][:8]:
-            print(f"      T{t} {nm:24} WR {a * 100:+.1f} pp   dW {b * 100:+.2f} pp   n={n}")
-        print("    undervalued by WR (dW lift >> WR lift):")
-        for nm, t, n, a, b in table[:8]:
-            print(f"      T{t} {nm:24} WR {a * 100:+.1f} pp   dW {b * 100:+.2f} pp   n={n}")
+        wa, na = cell.get((h, t, i, 1), (0, 0))
+        bb, ba = base[(h, t, -1)], base[(h, t, 1)]
+        if n < MIN_N or na < MIN_N or bb[1] - n < MIN_N or ba[1] - na < MIN_N:
+            continue
+        lb = wn / n - (bb[0] - wn) / (bb[1] - n)
+        la = wa / na - (ba[0] - wa) / (ba[1] - na)
+        se = np.sqrt(0.25 / n + 0.25 / (bb[1] - n) + 0.25 / na + 0.25 / (ba[1] - na))
+        zs.append((lb - la) / se)
+        diffs.append(lb - la)
+        per_item[i].append((lb - la, 1 / se ** 2))
+    zs = np.array(zs)
+    return (zs.std() if len(zs) else 0.0), zs, np.array(diffs), per_item
+
+
+def item_metrics(rows, items, min_n=300):
+    """item -> (win-rate lift, dW lift, n): within-hero lift over same-tier items (item left out),
+    averaged over heroes weighted by purchases."""
+    c = defaultdict(lambda: [0, 0, 0.0, 0])           # (hero, item) -> wins, n, dW sum, dW n
+    for _pid, h, i, t, _s, won, dw, _m in rows:
+        x = c[(h, i)]
+        x[0] += won
+        x[1] += 1
+        if dw is not None:
+            x[2] += dw
+            x[3] += 1
+    tier = defaultdict(lambda: [0, 0, 0.0, 0])        # (hero, tier) totals
+    for (h, i), x in c.items():
+        y = tier[(h, items[i]["item_tier"])]
+        for k in range(4):
+            y[k] += x[k]
+    acc = defaultdict(lambda: [0.0, 0.0, 0])
+    for (h, i), (wn, n, ds, dn) in c.items():
+        tw, tn, tds, tdn = tier[(h, items[i]["item_tier"])]
+        if tn - n < 30 or tdn - dn < 30 or not dn:
+            continue
+        a = acc[i]
+        a[0] += n * (wn / n - (tw - wn) / (tn - n))
+        a[1] += n * (ds / dn - (tds - ds) / (tdn - dn))
+        a[2] += n
+    return {i: (s1 / n, s2 / n, n) for i, (s1, s2, n) in acc.items() if n >= min_n}
 
 
 if __name__ == "__main__":

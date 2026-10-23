@@ -6,6 +6,7 @@ time (sold time, imbue target). Written as one JSON line per match to data/match
 usage: python fetch_matches.py --n 5000 [--badge 90] [--workers 8]
 """
 import argparse
+import http.client
 import json
 import os
 import sys
@@ -44,8 +45,8 @@ def fetch(mid):
             if e.code == 404:
                 return None
             time.sleep(float(e.headers.get("Retry-After") or 0) or 3 * (attempt + 1))
-        except (urllib.error.URLError, TimeoutError):
-            time.sleep(3 * (attempt + 1))
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
+            time.sleep(3 * (attempt + 1))     # dropped connections, timeouts, truncated JSON
     return None
 
 
