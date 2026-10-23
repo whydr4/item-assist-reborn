@@ -278,20 +278,30 @@
         // AbilitySlotMenu (shop_ability_slot_menu.xml) keeps the 4 icons inside #abilitiesContainer
         var slots = (menu.FindChildTraverse && menu.FindChildTraverse("abilitiesContainer")) || menu;
         var kids = slots.Children ? (slots.Children() || []) : [];
-        for (var i = 0; i < kids.length; i++) { var old = kids[i].FindChild ? kids[i].FindChild("IARImbueStar") : null; if (old) old.DeleteAsync(0); }
+        for (var i = 0; i < kids.length; i++) { var old = kids[i].FindChildTraverse ? kids[i].FindChildTraverse("IARImbueStar") : null; if (old) old.DeleteAsync(0); }
         var head = popup.FindChildTraverse ? popup.FindChildTraverse("HeaderContainer") : null;
         var oldLine = head && head.FindChild ? head.FindChild("IARImbueLine") : null; if (oldLine) oldLine.DeleteAsync(0);
         if (!shown || !slot || !kids[slot - 1]) return;
-        // a frame drawn inside the icon's own bounds (anything past its edge is drawn under the next icon)
-        var box = $.CreatePanel("Panel", kids[slot - 1], "IARImbueStar");
-        try { box.hittest = false; } catch (e) {}
-        css(box, { width: "100%", height: "100%", border: "3px solid " + PAL.accent, borderRadius: "6px", backgroundColor: "transparent" });   // no box-shadow: Panorama fills the whole panel with it
         var st = DATA.imbueStats && DATA.imbueStats[String(_heroId)] && DATA.imbueStats[String(_heroId)][id];
         if (head) {
             var line = $.CreatePanel("Label", head, "IARImbueLine");
             line.text = T("imbueTip").replace("{s}", slot).replace("{p}", st ? Math.round(st[1] * 100) : "?");
             css(line, { horizontalAlign: "center", color: PAL.accent, fontSize: "18px", fontFamily: PAL.font, marginTop: "6px" });
         }
+        // The slot also holds the number and the game's "Recommended" tag, and the icon's own panels clip
+        // children, so the frame lives in the slot and is placed over the measured ability circle
+        // (CitadelAbilityIcon#AbilityIcon .ability_bg); until the popup has laid out we retry next loop.
+        var host = kids[slot - 1], icon = host.FindChildTraverse ? host.FindChildTraverse("AbilityIcon") : null;
+        var bg = icon && icon.FindChildrenWithClassTraverse ? (icon.FindChildrenWithClassTraverse("ability_bg") || [])[0] : null;
+        var circle = bg || (icon && icon.FindChildTraverse ? icon.FindChildTraverse("button_container") : null);
+        var sc = 0, cw = 0, chh = 0, hp = null, cp = null;
+        try { sc = host.actualuiscale_x || 1; cw = circle.actuallayoutwidth; chh = circle.actuallayoutheight; hp = host.GetPositionWithinWindow(); cp = circle.GetPositionWithinWindow(); } catch (e) {}
+        if (!(cw > 0 && chh > 0 && hp && cp)) { _imbueSig = ""; return; }
+        var pad = 4, box = $.CreatePanel("Panel", host, "IARImbueStar");
+        try { box.hittest = false; } catch (e) {}
+        css(box, { width: Math.round(cw / sc + 2 * pad) + "px", height: Math.round(chh / sc + 2 * pad) + "px",
+                   x: Math.round((cp.x - hp.x) / sc - pad) + "px", y: Math.round((cp.y - hp.y) / sc - pad) + "px",
+                   border: "3px solid " + PAL.accent, borderRadius: "6px", backgroundColor: "transparent" });   // no box-shadow: Panorama fills the whole panel with it
     }
     // Skills: HUD ability buttons (CitadelHudAbilityButton) carry isUnlocked / canUnlock, and their pips
     // #AbilityUnlock1..3 carry hasAbilityUpgrade / canAffordUpgrade (citadel_hud_ability_button.css).
