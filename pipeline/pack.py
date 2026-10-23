@@ -4,9 +4,11 @@ Deadlock has no public tools; CS2's resourcecompiler produces Panorama resources
 It compiles files placed under <cs2>/content/csgo_addons/<addon>/ into <cs2>/game/csgo_addons/<addon>/.
 
 usage: python pack.py [--pak 30] [--install]
+  settings.json (repo root) holds the panel defaults baked into the build
   --install  copy dist/pakNN_dir.vpk into Deadlock's addons (refuses to overwrite a different mod)
 """
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -28,6 +30,7 @@ SOURCES = {
     "mod_src/panorama/styles/recommender.css": "panorama/styles/recommender.css",
 }
 PREBUILT = os.path.join(ROOT, "mod_src", "prebuilt")
+SETTINGS = os.path.join(ROOT, "settings.json")   # player's lasting panel choices
 
 
 def compiled_name(rel):
@@ -56,6 +59,13 @@ def main():
         dst = os.path.join(content, *rel.split("/"))
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copyfile(s, dst)
+        if src == "data/recommender_data.js":
+            # Panorama in Deadlock has no storage the panel could save to, so the player's lasting
+            # choices (settings.json) ride along with the data as QOL_REC_DATA.userDefaults
+            with open(SETTINGS, encoding="utf-8") as f:
+                prefs = {k: v for k, v in json.load(f).items() if not k.startswith("_")}
+            with open(dst, "a", encoding="utf-8") as f:
+                f.write("QOL_REC_DATA.userDefaults=" + json.dumps(prefs, separators=(",", ":")) + ";\n")
         r = subprocess.run([rc, "-i", dst, "-nop4", "-f"], capture_output=True, text=True, errors="replace")
         out = os.path.join(game, *compiled_name(rel).split("/"))
         if r.returncode != 0 or not os.path.exists(out):

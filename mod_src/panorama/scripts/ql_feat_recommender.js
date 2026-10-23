@@ -107,29 +107,19 @@
         return (t && t[String(itemId)]) || "";
     }
 
-    // ---- CONFIG (knobs, persisted) -----------------------------------------
+    // ---- CONFIG -------------------------------------------------------------
     // mode "blend" (default) = pick rate + value; rank = data band matching the player's own rank
-    // (null -> DATA.meta.default_band); cfgV bumps when a default changes so old saved configs migrate.
+    // (null -> DATA.meta.default_band). Deadlock's Panorama has no storage API at all ($.persistentStorage
+    // does not exist in client 6819 — checked in the DLLs), so in-game switches last until the game
+    // closes; the player's lasting choices come from settings.json, baked in by pipeline/pack.py as
+    // QOL_REC_DATA.userDefaults.
     var CFG = { count: 8, refreshSec: 3, opacity: 100, side: "left", mode: "blend", rank: null, showPct: false, min: false, holding: false, holdCount: 3, coach: false, gubami: false, skills: false, buy: true, counters: true, tips: false, badges: true, qsync: false, skillHint: true, cfgV: 2 };
     var GUBAMI_ICON = "s2r://panorama/images/gubami/gubami_coach.vtex";   // bundled custom portrait (mod asset)
     function loadCfg() {
-        var s = null;
-        try { s = $.persistentStorage.getItem("qlrec_cfg"); } catch (e) {  }
-        var savedV = 0;
-        // Only the choices still offered in the settings are restored; everything else is fixed to the
+        // Only the choices still offered in the settings are taken; everything else is fixed to the
         // values the research and in-game tests settled on (blend sort, 8 items, no extra columns).
-        var USER_KEYS = { rank: 1, qsync: 1, badges: 1, min: 1, skillHint: 1 };
-        try { if (s) { var o = JSON.parse(s); savedV = o.cfgV || 0; for (var k in o) if (USER_KEYS[k] && CFG.hasOwnProperty(k)) CFG[k] = o[k]; } } catch (e) {}
-        // v2: "popular" stopped being the default (pure copying of common buys was the least robust mode
-        // in research/sim.py), so configs saved with the old default move to "blend".
-        if (savedV < 2 && (CFG.mode === "popular" || CFG.mode === "balanced" || CFG.mode === "smart")) CFG.mode = "blend";
-        CFG.cfgV = 2;
-    }
-    function saveCfg() {
-        try {
-            $.persistentStorage.setItem("qlrec_cfg", JSON.stringify(CFG));
-            var chk = $.persistentStorage.getItem("qlrec_cfg");
-        } catch (e) {  }
+        var USER_KEYS = { rank: 1, qsync: 1, badges: 1, min: 1, skillHint: 1 }, o = DATA.userDefaults || {};
+        for (var k in o) if (o.hasOwnProperty(k) && USER_KEYS[k] && CFG.hasOwnProperty(k)) CFG[k] = o[k];
     }
     loadCfg();
 
@@ -544,6 +534,9 @@
         if (findByAny(root, "localPlayerTeam2", 0)) return 2;
         return 0;   // spectator / unknown -> can't tell friend from foe, skip
     }
+    function rpKey(e) {
+        return _rpText(e, "recentModPurchaserHero") + "|" + _rpText(e, "recentModPurchaseName") + "|" + _rpText(e, "recentTimePurchased") + "|" + _rpText(e, "recentModTierCost");
+    }
     function collectRecent(root, shop) {
         if (!root) return;   // always run: owned-tracking is independent of the Counters toggle
         // Cache the feed container: this fn runs every tick (shop open AND closed), so re-traversing the whole
@@ -562,8 +555,7 @@
             // Client 6819 dropped the buyer-name label (only an unreadable portrait is left), so the
             // dedup key is item + time + tier text, and the side comes from the game's own
             // isEnemyPurchase class (team classes stay as the fallback).
-            var buyer = _rpText(e, "recentModPurchaserHero");
-            var key = buyer + "|" + item + "|" + _rpText(e, "recentTimePurchased") + "|" + _rpText(e, "recentModTierCost");
+            var buyer = _rpText(e, "recentModPurchaserHero"), key = rpKey(e);
             // The feed is newest-first with a rolling cap: the first entry we've ALREADY seen means
             // every entry below it is older and also seen -> stop. Steady state (no new buys) scans ~1
             // entry instead of ~50, removing the per-second FindChildrenWithClassTraverse storm that
@@ -583,7 +575,7 @@
                 // reset on hero change). Limitation (same as the tab scan today): it's a purchase STREAM,
                 // so sold items stay struck until hero change; consumed components read as owned like now.
                 var lc = canonItem(item);   // feed shows the client's language; owned keys are English
-                if (!_ownedAccum[lc]) { _ownedAccum[lc] = 1; ownedAdded++; }
+                if (!_ownedAccum[lc]) { _ownedAccum[lc] = 1; _ownedAt[lc] = _hb; ownedAdded++; }
             }
         }
         if (enemyAdded && CFG.counters) {
@@ -616,27 +608,52 @@
     // .purchasedIcon checkmark shown when owned (citadel_shop_mod_view.xml). Collect owned item
     // NAMES (our recs are keyed by name too) so we can strike them. The modName text + purchasedIcon
     // only resolve for the ACTIVE category tab, so a single scan sees only that tab's owned items;
-    // we ACCUMULATE across scans (union; reset on hero change) and never remove per-panel (a
-    // readable-but-unclassed copy isn't proof of a sale, so removing false-drops owned items). If an
-    // owned item is in a tab you haven't opened, it won't be detected until you visit that tab — the
-    // Help tip tells the player to open the shop's Search tab (shows every item) to catch them all.
-    var _ownedAccum = {}, _ownedDiagN = 0;
+    // we ACCUMULATE across scans (union; reset on a new match or hero). Selling in the shop shows no
+    // toast, so a sale is read here too: a card that is bound (its name readable) but carries none of
+    // the owned classes, with no owned copy of the same item in this scan, drops the item — but only
+    // if we've known it as owned for 5+ s (the classes land a moment after a purchase).
+    // _staleCards: the HUD (and this script) survive a map change, and shop cards keep their "owned"
+    // classes from the last match until the game rebinds them. The card panels that looked owned at the
+    // change are remembered and ignored until each one shows "not owned" once; every other card counts
+    // as usual, so buying the same item again in the new match is still seen.
+    var _ownedAccum = {}, _ownedAt = {}, _staleCards = [], _ownedDiagN = 0;
+    function cardOwned(e) {
+        var own = false;
+        try { own = e.BHasClass("owned") || e.BHasClass("usedAsComponent"); } catch (x) {}
+        if (!own && e.FindChildrenWithClassTraverse) {   // FALLBACK: visible checkmark (current tab only)
+            var pics = e.FindChildrenWithClassTraverse("purchasedIcon") || [];
+            for (var j = 0; j < pics.length; j++) { try { if (pics[j].visible) { own = true; break; } } catch (x) {} }
+        }
+        return own;
+    }
+    function markStaleCards() {
+        _staleCards = [];
+        var shop = valid(_shopCache) ? _shopCache : null;
+        var cards = shop && shop.FindChildrenWithClassTraverse ? (shop.FindChildrenWithClassTraverse("mod_view") || []) : [];
+        for (var i = 0; i < cards.length; i++) if (cardOwned(cards[i])) _staleCards.push(cards[i]);
+    }
     function getOwnedNames(shop) {
         if (!shop || !shop.FindChildrenWithClassTraverse) return _ownedAccum;
         var entries = shop.FindChildrenWithClassTraverse("mod_view") || [];
-        var nOwn = 0, nComp = 0, nVis = 0;
+        var ownNow = {}, notOwn = {};
         for (var i = 0; i < entries.length; i++) {
-            var e = entries[i], own = false, isComp = false, vis = false;
+            var e = entries[i];
             if (!e.FindChildrenWithClassTraverse) continue;
-            try { if (e.BHasClass) { own = e.BHasClass("owned"); isComp = e.BHasClass("usedAsComponent"); } } catch (x) {}
-            if (!own && !isComp) {   // FALLBACK: visible checkmark (current tab only)
-                var pics = e.FindChildrenWithClassTraverse("purchasedIcon") || [];
-                for (var j = 0; j < pics.length; j++) { try { if (pics[j].visible) { vis = true; break; } } catch (x) {} }
-            }
-            if (own) nOwn++; if (isComp) nComp++; if (vis) nVis++;
-            if (!(own || isComp || vis)) continue;               // accumulate-only: never remove here
+            var own = cardOwned(e), si = _staleCards.length ? _staleCards.indexOf(e) : -1;
+            if (si !== -1) { if (own) continue; _staleCards.splice(si, 1); }   // stale until it shows "not owned"
             var nms = e.FindChildrenWithClassTraverse("modName") || [];
-            for (var k = 0; k < nms.length; k++) { var t = ""; try { t = String(nms[k].text || "").replace(/^\s+|\s+$/g, ""); } catch (x) {} if (t) _ownedAccum[canonItem(t)] = 1; }
+            for (var k = 0; k < nms.length; k++) {
+                var t = ""; try { t = String(nms[k].text || "").replace(/^\s+|\s+$/g, ""); } catch (x) {}
+                if (!t) continue;
+                var key = canonItem(t);
+                if (own) { ownNow[key] = 1; if (!_ownedAccum[key]) { _ownedAccum[key] = 1; _ownedAt[key] = _hb; } }
+                else notOwn[key] = 1;
+            }
+        }
+        for (var nk in notOwn) if (notOwn.hasOwnProperty(nk) && !ownNow[nk] && _ownedAccum[nk] && _hb - (_ownedAt[nk] || 0) >= 5) {
+            delete _ownedAccum[nk];
+            if (_ownLog.length >= 3) _ownLog.shift();
+            _ownLog.push("-" + itemName(nameToId(nk) || nk) + " (shop)");
         }
         if (_ownedDiagN < 8) { _ownedDiagN++;  }
         return _ownedAccum;
@@ -957,7 +974,6 @@
     function applyCfg() {
         if (valid(_float)) css(_float, { horizontalAlign: CFG.side, opacity: (CFG.opacity / 100).toString() });
         positionTip();   // keep the side tip panel docked on the correct side
-        saveCfg();
     }
     // ---- Y-only hold drag ---------------------------------------------------
     // Native drag-drop gives the press-hold gesture, but dragging `displayPanel=_float`
@@ -1017,7 +1033,7 @@
     }
     // ---- minimize: collapse to just "★ Buy Next" (still draggable) ----------
     function setMinimized(min) {
-        CFG.min = !!min; saveCfg();
+        CFG.min = !!min;
         var vis = min ? "collapse" : "visible";
         if (valid(_gearBtn)) css(_gearBtn, { visibility: vis });
         if (valid(_rightGrp)) css(_rightGrp, { visibility: vis });
@@ -1119,7 +1135,7 @@
         var gcb = withClick(toggleGubami);
         gb.SetPanelEvent("onactivate", gcb); gb.SetPanelEvent("onmouseactivate", gcb);
     }
-    function toggleGubami() { CFG.gubami = !CFG.gubami; if (CFG.gubami) CFG.coach = true; saveCfg(); closeHelp(); toggleHelp(); if (CFG.gubami) coachPreview(); }   // enabling Gubami turns the coach on, reopens the panel, and previews him right away
+    function toggleGubami() { CFG.gubami = !CFG.gubami; if (CFG.gubami) CFG.coach = true; closeHelp(); toggleHelp(); if (CFG.gubami) coachPreview(); }   // enabling Gubami turns the coach on, reopens the panel, and previews him right away
 
     function knobRow(box, label, opts, cur, pick, btnStyle) {
         var row = $.CreatePanel("Panel", box, ""); css(row, { flowChildren: "right", marginBottom: "3px" });
@@ -1239,23 +1255,28 @@
     // Shop cards bind their names only in the active tab and client 6819's feed has no buyer, so a
     // Quick Buy purchase (or a buy from another tab) was never seen: the item stayed #1 and Auto-queue
     // queued it again. Two tab-independent signals, both run every tick, shop open or closed:
-    //  1) the queue: an entry that leaves it while souls go down was bought (a manual delete costs
-    //     nothing; our own clear + rebuild is skipped through _qsBusyUntil);
+    //  1) the queue: exactly one entry left it and the souls spent in that second match its price
+    //     (a death also costs souls, so a manual delete at that moment must not read as a purchase;
+    //     our own clear + rebuild is skipped through _qsBusyUntil);
     //  2) the game's toast (hud.xml #ToastManager): "Item Purchased" / "Item Sold" next to the item name.
     var _qPrev = null, _qPrevSouls = 0, _qsBusyUntil = 0, _toastMgr = null, _txtBuy = null, _txtSell = null, _ownLog = [];
     function markOwned(id, on, why) {
         var it = DATA.items[String(id)], key = it ? String(it.n).toLowerCase() : null;
         if (!key || !!_ownedAccum[key] === on) return false;
-        if (on) _ownedAccum[key] = 1; else delete _ownedAccum[key];
+        if (on) { _ownedAccum[key] = 1; _ownedAt[key] = _hb; } else delete _ownedAccum[key];
         if (_ownLog.length >= 3) _ownLog.shift();
         _ownLog.push((on ? "+" : "-") + itemName(id) + " (" + why + ")");
         return true;
     }
     function watchQueue(root) {
         var now = qbQueue().map(function (x) { return x.id; }), souls = getSouls(root), changed = false;
-        if (_qPrev && _hb >= _qsBusyUntil && souls < _qPrevSouls)
-            for (var i = 0; i < _qPrev.length; i++)
-                if (_qPrev[i] && now.indexOf(_qPrev[i]) === -1 && markOwned(_qPrev[i], true, "queue")) changed = true;
+        if (_qPrev && _hb >= _qsBusyUntil && souls < _qPrevSouls) {
+            var gone = [];
+            for (var i = 0; i < _qPrev.length; i++) if (_qPrev[i] && now.indexOf(_qPrev[i]) === -1) gone.push(_qPrev[i]);
+            var meta = gone.length === 1 ? DATA.items[String(gone[0])] : null, spent = _qPrevSouls - souls;
+            // the price is the full cost, or less when owned components fold in (effectiveCost)
+            if (meta && meta.c && spent >= 0.9 * effectiveCost(meta, _ownedAccum) && spent <= 1.02 * meta.c && markOwned(gone[0], true, "queue")) changed = true;
+        }
         _qPrev = now; _qPrevSouls = souls;
         return changed;
     }
@@ -1265,7 +1286,17 @@
         var k = (p.Children ? p.Children() : []) || [];
         for (var i = 0; i < k.length; i++) labelTexts(k[i], d + 1, out);
     }
-    function watchToasts(root) {
+    function toastDiag() {
+        var ts = valid(_toastMgr) && _toastMgr.Children ? (_toastMgr.Children() || []) : [], out = [];
+        for (var i = 0; i < ts.length; i++) {
+            var l = []; labelTexts(ts[i], 0, l);
+            var h = 0, op = ""; try { h = Math.round(ts[i].actuallayoutheight); op = ts[i].style.opacity; } catch (e) {}
+            out.push(i + ":" + (_vis(ts[i]) ? "v" : "h") + h + "/" + op + "/" + (l.slice(-1)[0] || "").substr(0, 14));
+        }
+        return ts.length + " " + out.join(" ");
+    }
+    var _toastSeen = {};
+    function watchToasts(root, primeOnly) {
         if (!valid(_toastMgr)) _toastMgr = root && root.FindChildTraverse ? root.FindChildTraverse("ToastManager") : null;
         if (!_toastMgr || !_toastMgr.Children) return false;
         if (_txtBuy === null) {
@@ -1273,8 +1304,12 @@
             if (!_txtBuy || _txtBuy.charAt(0) === "#") _txtBuy = "item purchased";
             if (!_txtSell || _txtSell.charAt(0) === "#") _txtSell = "item sold";
         }
-        var toasts = _toastMgr.Children() || [], changed = false;
-        for (var i = toasts.length - 1; i >= 0; i--) {   // oldest first, so a buy-then-sell ends as sold
+        // A toast counts once, when its "kind|item" first shows up: _toastSeen is what is on screen now,
+        // so a lingering toast isn't applied again and a later buy of the same item counts once the first
+        // toast is gone. The game reuses toast panels, so the panel itself can't be the key.
+        var toasts = _toastMgr.Children() || [], changed = false, now = {};
+        for (var i = toasts.length - 1; i >= 0; i--) {
+            if (!_vis(toasts[i])) continue;
             var labels = [], kind = 0, id = null;
             labelTexts(toasts[i], 0, labels);
             for (var j = 0; j < labels.length; j++) {
@@ -1284,9 +1319,42 @@
                 rest = rest.replace(/^[\s:—-]+|[\s:—-]+$/g, "");
                 if (!id && rest) id = nameToId(rest);
             }
-            if (kind && id && markOwned(id, kind > 0, "toast")) changed = true;
+            if (!kind || !id) continue;                    // text not laid out yet: look again next tick
+            var sig = kind + "|" + id;
+            now[sig] = 1;
+            if (_toastSeen[sig] || primeOnly) continue;
+            if (markOwned(id, kind > 0, kind > 0 ? "toast" : "sold")) changed = true;
         }
+        _toastSeen = now;
         return changed;
+    }
+    // A new match on the same hero (or hideout -> match) never triggered the hero-change reset, so the
+    // last match's items stayed "bought" — this script and the HUD survive map changes. New match = the
+    // match id in the corner (#ClientServerDebugStats, "MATCH: {s:match_id}") changed, the HUD root was
+    // rebuilt, or the game clock went back (a short sandbox visit only moves it a few seconds).
+    var _matchClock = -1, _matchRoot = null, _matchId = "", _dbgStats = null;
+    function watchMatch(root) {
+        var t = getGameTimeSec(root), why = "", mid = "";
+        if (!valid(_dbgStats) && _hb % 5 === 0 && root && root.FindChildTraverse) _dbgStats = root.FindChildTraverse("ClientServerDebugStats");
+        try { var m = valid(_dbgStats) ? String(_dbgStats.text || "").match(/(\d{5,})/) : null; mid = m ? m[1] : ""; } catch (e) {}
+        if (mid && _matchId && mid !== _matchId) why = "match " + mid;
+        else if (_matchRoot && root !== _matchRoot) why = "new map";
+        else if (_matchClock >= 0 && t < _matchClock - 3) why = "clock " + _matchClock + "->" + t;
+        if (mid) _matchId = mid;
+        _matchRoot = root;
+        _matchClock = why ? t : Math.max(_matchClock, t);
+        if (!why) return;
+        markStaleCards();
+        _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};
+        // The purchase feed still lists the last map's buys (it is only read with the shop open, so some
+        // were never seen) and old toasts may still be up: mark both as handled, or they would come back
+        // as this match's enemy items and purchases.
+        _enemyItems = {}; _rpEnemySig = ""; _qsSetupDone = false;
+        watchToasts(root, true);
+        var cont = valid(_recentContCache) ? _recentContCache : (root && root.FindChildTraverse ? root.FindChildTraverse("RecentPurchasesContainer") : null);
+        var ents = cont && cont.FindChildrenWithClassTraverse ? (cont.FindChildrenWithClassTraverse("recentPurchase") || []) : [];
+        for (var i = 0; i < ents.length; i++) _rpSeen[rpKey(ents[i])] = 1;
+        _ownLog = ["new match (" + why + ")"];
     }
     function watchOwn(root, shop) {
         var a = watchToasts(root), b = watchQueue(root);
@@ -1306,18 +1374,18 @@
         if (!_cfgShown) return;
         // 1) rank: Auto reads the badge from the match; manual bands for players without one
         knobRow(_cfgBox, T("rank"), [{ t: T("auto"), v: null }, { t: T("low"), v: "low" }, { t: T("mid"), v: "mid" }, { t: T("high"), v: "high" }, { t: T("pro"), v: "pro" }],
-                CFG.rank, function (v) { CFG.rank = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); }, { padding: "4px 7px", marginRight: "3px" });
+                CFG.rank, function (v) { CFG.rank = v; refreshFloat(hudRoot(), null); renderConfig(); }, { padding: "4px 7px", marginRight: "3px" });
         var bandName = "", bl = (DATA.meta && DATA.meta.bands) || [];
         for (var bi = 0; bi < bl.length; bi++) if (bl[bi].id === bandId()) bandName = bl[bi].name;
         var rk = _rankTier !== null ? RANK_NAMES[_rankTier] + (_rankSub !== null ? " " + _rankSub : "") : T("noRank");
         hintLabel(T("data") + ": " + bandName + (CFG.rank ? "" : " · " + T("autoRank") + ": " + rk) + " · " + T("tiersHint"));
         // 2) auto-queue: our picks become the game's Quick Buy queue
-        switchRow(_cfgBox, T("queue"), CFG.qsync, function (v) { CFG.qsync = v; _qsNextAt = 0; _qsSetupDone = false; if (!v) queueRestore(); saveCfg(); renderConfig(); });
+        switchRow(_cfgBox, T("queue"), CFG.qsync, function (v) { CFG.qsync = v; _qsNextAt = 0; _qsSetupDone = false; if (!v) queueRestore(); renderConfig(); });
         hintLabel(T("queueHint"));
         // 3) rank numbers on the shop cards
-        switchRow(_cfgBox, T("marks"), CFG.badges, function (v) { CFG.badges = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
+        switchRow(_cfgBox, T("marks"), CFG.badges, function (v) { CFG.badges = v; refreshFloat(hudRoot(), null); renderConfig(); });
         hintLabel(T("marksHint"));
-        switchRow(_cfgBox, T("skill"), CFG.skillHint, function (v) { CFG.skillHint = v; _skillSig = ""; if (!v) clearSkillMarks(); saveCfg(); renderConfig(); });
+        switchRow(_cfgBox, T("skill"), CFG.skillHint, function (v) { CFG.skillHint = v; _skillSig = ""; if (!v) clearSkillMarks(); renderConfig(); });
         hintLabel(T("skillHint"));
         // diagnostics, collapsed: what the mod reads from the HUD (for bug reports)
         var dl = $.CreatePanel("Label", _cfgBox, ""); dl.text = (_dbgShown ? "▾ " : "▸ ") + T("debug");
@@ -1331,9 +1399,10 @@
         for (k in _rpSeen) if (_rpSeen.hasOwnProperty(k)) seenN++;
         for (k in _ownedAccum) if (_ownedAccum.hasOwnProperty(k)) ownL.push(itemName(nameToId(k) || k));
         var qn = qbQueue().map(function (x) { return x.id ? itemName(x.id) : "?"; });
-        var diag = ["lang " + (_uiLang || "en?") + " · hero " + ((DATA.heroes && DATA.heroes[String(_heroId)]) || "?") + " · " + (_heroHist.join(" > ") || "-"),
-                    "owned " + ownL.length + (ownL.length ? ": " + ownL.slice(-6).join(", ") : ""),
+        var diag = ["match " + (_matchId || "?") + " · lang " + (_uiLang || "en?") + " · hero " + ((DATA.heroes && DATA.heroes[String(_heroId)]) || "?") + " · " + (_heroHist.join(" > ") || "-"),
+                    "owned " + ownL.length + (ownL.length ? ": " + ownL.slice(-6).join(", ") : "") + " · stale cards " + _staleCards.length,
                     "own events: " + (_ownLog.join(", ") || "-"),
+                    "toasts: " + toastDiag(),
                     "skill: " + _skillDiag,
                     "lane: " + (_laneEnemies.map(function (x) { return (DATA.heroes && DATA.heroes[String(x)]) || x; }).join(", ") || "-") + " · enemies " + en.join(", "),
                     "feed " + seenN + " · enemy items " + ei.length + " (counters " + ctrN + ")" + (ei.length ? ": " + ei.slice(-3).join(", ") : ""),
@@ -1771,7 +1840,8 @@
                 _heroSwitches++; _heroCand = null; _heroCandN = 0;
                 if (_heroHist.length >= 4) _heroHist.shift();
                 _heroHist.push(((DATA.heroes && DATA.heroes[String(h)]) || h) + (top ? "(bar)" : "(shop)"));
-                _heroId = h; _ownedAccum = {}; _qPrev = null; _ownLog = []; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
+                if (_heroId) markStaleCards(); else _staleCards = [];   // a real switch: the old hero's cards are stale
+                _heroId = h; _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownLog = []; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
                 _enemyItems = {}; _rpSeen = {}; _rpEnemySig = "";   // reset accumulated enemy purchases
                 if (valid(_float)) refreshFloat(root, shop);
             }
@@ -1818,6 +1888,7 @@
             }
             if (_hb >= _coachForceUntil) hideCoach();   // shop-closed only, EXCEPT a brief preview when you (re)enable the coach
         } else { _shopWasOpen = false; coachCheck(root); if (_helpShown) closeHelp(); }   // tips close with the shop
+        watchMatch(root);
         watchOwn(root, shop);
         if (CFG.qsync && _hb % 2 === 0) queueSync(root, shop);   // also with the shop closed: the game buys the queue front
         skillHint(root);
