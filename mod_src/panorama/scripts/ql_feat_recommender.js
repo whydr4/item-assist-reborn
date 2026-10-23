@@ -92,7 +92,7 @@
     // ---- CONFIG (knobs, persisted) -----------------------------------------
     // mode "blend" (default) = pick rate + value; rank = data band matching the player's own rank
     // (null -> DATA.meta.default_band); cfgV bumps when a default changes so old saved configs migrate.
-    var CFG = { count: 8, refreshSec: 3, opacity: 90, side: "left", mode: "blend", rank: null, showPct: true, min: false, holding: false, holdCount: 3, coach: false, gubami: false, skills: false, buy: true, counters: true, tips: false, badges: true, cfgV: 2 };
+    var CFG = { count: 8, refreshSec: 3, opacity: 90, side: "left", mode: "blend", rank: null, showPct: true, min: false, holding: false, holdCount: 3, coach: false, gubami: false, skills: false, buy: true, counters: true, tips: false, badges: true, qsync: false, cfgV: 2 };
     var GUBAMI_ICON = "s2r://panorama/images/gubami/gubami_coach.vtex";   // bundled custom portrait (mod asset)
     function loadCfg() {
         var s = null;
@@ -1021,6 +1021,46 @@
         _rankProbe = hits.length ? hits : ["rk: nothing with rank/badge/mmr in the HUD"];
         return _rankProbe;
     }
+    // ---- QUEUE SYNC: our #1 pick at the front of the game's quick-buy queue ----------
+    // The quick-buy queue lives on the server (C_CitadelPlayerPawn::m_vecQuickbuyQueue) and the game buys
+    // its front item by itself at a shop, even with the shop closed. client.dll registers the Panorama
+    // event CitadelQuickbuyAddItem; probing in-game (2026-10-23, client 6819) showed it takes 3 numbers and
+    // (unsigned item id, 0, 0) inserts the item at the FRONT (signed ids or other shapes fail to parse or
+    // misbehave). Entries are #QuickbuyQueue > CitadelHudQuickbuyEntry with a localized #ModName and a
+    // #DeleteButton that removes the entry when activated. We only ever add or remove our own pick; the
+    // player's build items stay queued behind it.
+    var _qsAdded = null, _qsNextAt = 0, _qbPanel = null;
+    function qbQueue() {
+        var root = hudRoot();
+        if (!valid(_qbPanel)) _qbPanel = root && root.FindChildTraverse ? root.FindChildTraverse("QuickbuyQueue") : null;   // cached: no per-tick tree walk
+        var q = _qbPanel, out = [];
+        var kids = q && q.Children ? (q.Children() || []) : [];
+        for (var i = 0; i < kids.length; i++) {
+            var nm = kids[i].FindChildTraverse ? kids[i].FindChildTraverse("ModName") : null, t = "";
+            try { t = nm ? String(nm.text || "") : ""; } catch (e) {}
+            out.push({ id: nameToId(t) || null, panel: kids[i] });
+        }
+        return out;
+    }
+    function qbDelete(entry) {
+        var b = entry && entry.panel && entry.panel.FindChildTraverse ? entry.panel.FindChildTraverse("DeleteButton") : null;
+        if (b) { try { $.DispatchEvent("Activated", b, "mouse"); } catch (e) {} }
+    }
+    function qbAddFront(id) { try { $.DispatchEvent("CitadelQuickbuyAddItem", Number(id), 0, 0); } catch (e) {} }
+    function queueSync(root, shop) {
+        if (!CFG.qsync || !_heroId || _hb < _qsNextAt) return;
+        var recs = computeRecs(_heroId, getSouls(root), getOwnedNames(shop), _enemies, getGameTimeSec(root));
+        if (!recs.length) return;
+        var top = recs[0].id, q = qbQueue();
+        if (q.length && q[0].id === top) { _qsAdded = top; return; }
+        _qsNextAt = _hb + 3;   // one change per 3 s: each step waits for the server's queue update
+        for (var i = 0; i < q.length; i++) {
+            if (q[i].id === _qsAdded && _qsAdded !== top) { qbDelete(q[i]); return; }   // our stale pick goes first
+        }
+        for (var j = 1; j < q.length; j++) if (q[j].id === top) { qbDelete(q[j]); return; }   // no duplicate further back
+        qbAddFront(top);
+        _qsAdded = top;
+    }
     function renderConfig() {
         if (!valid(_cfgBox)) return;
         _cfgBox.RemoveAndDeleteChildren();
@@ -1037,6 +1077,7 @@
         knobRow(_cfgBox, "Items", [{ t: "5", v: 5 }, { t: "8", v: 8 }, { t: "10", v: 10 }, { t: "15", v: 15 }], CFG.count, function (v) { CFG.count = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         switchRow(_cfgBox, "Pct", CFG.showPct, function (v) { CFG.showPct = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         switchRow(_cfgBox, "Click-buy", CFG.buy, function (v) { CFG.buy = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
+        switchRow(_cfgBox, "Queue sync", CFG.qsync, function (v) { CFG.qsync = v; _qsNextAt = 0; saveCfg(); renderConfig(); });
         switchRow(_cfgBox, "Shop marks", CFG.badges, function (v) { CFG.badges = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         switchRow(_cfgBox, "Counters", CFG.counters, function (v) { CFG.counters = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         switchRow(_cfgBox, "Skill order", CFG.skills, function (v) { CFG.skills = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
@@ -1549,6 +1590,7 @@
             }
             if (_hb >= _coachForceUntil) hideCoach();   // shop-closed only, EXCEPT a brief preview when you (re)enable the coach
         } else { _shopWasOpen = false; coachCheck(root); if (_helpShown) closeHelp(); }   // tips close with the shop
+        if (CFG.qsync && _hb % 2 === 0) queueSync(root, shop);   // also with the shop closed: the game buys the queue front
         $.Schedule(1.0, tick);
     }
     function recLoop() {

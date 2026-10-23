@@ -329,10 +329,11 @@ def main():
     for iid, it in shop.items():
         o = old["items"].get(iid)
         if o:
-            items[iid] = dict(o, c=it.get("cost", o["c"]), t=it.get("item_tier", o["t"]))
+            items[iid] = dict(o, c=it.get("cost", o["c"]), t=it.get("item_tier", o["t"]), cls=it["class_name"])
         else:
             ic = find_icon(index, "panorama/images/items/", it.get("shop_image"))
-            items[iid] = {"n": it["name"], "c": it["cost"], "t": it["item_tier"], "s": it.get("item_slot_type"), "ic": ic or ""}
+            items[iid] = {"n": it["name"], "c": it["cost"], "t": it["item_tier"], "s": it.get("item_slot_type"), "ic": ic or "",
+                          "cls": it["class_name"]}   # internal name, e.g. for the game's quick-buy events
     item_tier = {int(k): v["t"] for k, v in items.items()}
 
     hero_matches = {lv: {r["hero_id"]: r["matches"] for r in q.hero_stats(lv)} for lv in queries.LEVELS}
