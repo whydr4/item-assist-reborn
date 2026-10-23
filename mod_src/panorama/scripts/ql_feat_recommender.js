@@ -92,7 +92,7 @@
     // ---- CONFIG (knobs, persisted) -----------------------------------------
     // mode "blend" (default) = pick rate + value; rank = data band matching the player's own rank
     // (null -> DATA.meta.default_band); cfgV bumps when a default changes so old saved configs migrate.
-    var CFG = { count: 8, refreshSec: 3, opacity: 90, side: "left", mode: "blend", rank: null, showPct: true, min: false, holding: true, holdCount: 3, coach: false, gubami: false, skills: false, buy: true, counters: true, tips: false, cfgV: 2 };
+    var CFG = { count: 8, refreshSec: 3, opacity: 90, side: "left", mode: "blend", rank: null, showPct: true, min: false, holding: false, holdCount: 3, coach: false, gubami: false, skills: false, buy: true, counters: true, tips: false, badges: true, cfgV: 2 };
     var GUBAMI_ICON = "s2r://panorama/images/gubami/gubami_coach.vtex";   // bundled custom portrait (mod asset)
     function loadCfg() {
         var s = null;
@@ -123,8 +123,8 @@
     }
     // Rank bands (pipeline/queries.py BANDS): each has its own rec/recp tables built from that band's
     // matches, because items really do perform differently by rank (~2 pp, research/rank_consistency.py).
-    function bandId() {
-        var b = CFG.rank;
+    function bandId() {   // manual choice > rank read from the HUD (CFG.rank null = Auto) > data default
+        var b = CFG.rank || autoBand();
         if (!b || !DATA.bands || !DATA.bands[b]) b = (DATA.meta && DATA.meta.default_band) || "mid";
         return b;
     }
@@ -185,7 +185,7 @@
     function deepLabelScan(p, depth, diag) {
         if (!p || depth > 30) return null;
         var t = null; try { t = p.text; } catch (e) {}
-        if (t) {
+        if (t && !nameToId(t)) {   // an item caption is never the hero ("Заслон стража" is not Warden)
             var en = (t.indexOf("Recommended") !== -1 || t.indexOf(" Build") !== -1 || t.indexOf("’s ") !== -1 || t.indexOf("'s ") !== -1);
             var id = scanTextForDisplay(t);
             if (id && (en || norm(t).length <= 40)) return id;     // short caption with a hero name, any language
@@ -234,6 +234,69 @@
         }
         return out;
     }
+    // ---- TOP BAR: local hero, lane, rank -------------------------------------
+    // Client 6819 marks the local player's top-bar panel with LocalPlayer and the players sharing its
+    // lane with IsInLocalPlayerLane (citadel_hud_top_bar.css). That is a far safer source for "my hero"
+    // than hero names in shop captions (ally pings and build notes name other heroes), and it gives
+    // the laning opponents for the matchup term.
+    var _topPlayers = null;
+    function topBarPlayers(root) {
+        if (_topPlayers && _topPlayers.length && valid(_topPlayers[0])) return _topPlayers;
+        var out = [];
+        (function walk(p, d) {
+            if (!p || d > 30 || out.length >= 12) return;
+            try { if (p.paneltype === "CitadelHudTopBarPlayer") { out.push(p); return; } } catch (e) {}
+            var k = (p.Children ? p.Children() : []) || [];
+            for (var i = 0; i < k.length; i++) walk(k[i], d + 1);
+        })(root, 0);
+        _topPlayers = out;
+        return out;
+    }
+    function hasCls(p, c) { try { return !!(p && p.BHasClass && p.BHasClass(c)); } catch (e) { return false; } }
+    function localHeroTopBar(root) {
+        var ps = topBarPlayers(root);
+        for (var i = 0; i < ps.length; i++) if (hasCls(ps[i], "LocalPlayer")) { var h = heroesInPanel(ps[i]); if (h.length) return h[0]; }
+        return null;
+    }
+    function scanLane(root, enemies) {
+        var ps = topBarPlayers(root), out = [];
+        for (var i = 0; i < ps.length; i++) {
+            if (!hasCls(ps[i], "IsInLocalPlayerLane") || hasCls(ps[i], "LocalPlayer")) continue;
+            var h = heroesInPanel(ps[i]);
+            if (h.length && enemies.indexOf(h[0]) !== -1) out.push(h[0]);
+        }
+        return out;
+    }
+    // Rank: the match's ranked summary (CitadelHudRankedPlayerSummary) has one .Player per player, the
+    // local one .IsLocalPlayer, each with a #RankedBadge carrying Rank0..Rank11 (badge tier) and a
+    // .Subrank label. Tier -> data band like pipeline/queries.py BANDS (badge = tier*10 + subrank).
+    var _rankTier = null, _rankSub = null, _rankTries = 0;
+    function detectRank(root) {
+        if (_rankTier !== null || _rankTries >= 20 || !root || !root.FindChildTraverse) return;
+        _rankTries++;
+        var sum = root.FindChildTraverse("RankedPlayerSummary");
+        if (!sum || !sum.FindChildrenWithClassTraverse) return;
+        var pl = sum.FindChildrenWithClassTraverse("Player") || [], me = null;
+        for (var i = 0; i < pl.length; i++) if (hasCls(pl[i], "IsLocalPlayer")) { me = pl[i]; break; }
+        var badge = me && me.FindChildTraverse ? me.FindChildTraverse("RankedBadge") : null;
+        if (!badge) return;
+        var tier = null;
+        (function walk(p, d) {
+            if (!p || d > 6 || tier !== null) return;
+            for (var n = 11; n >= 0; n--) if (hasCls(p, "Rank" + n)) { tier = n; return; }
+            var k = (p.Children ? p.Children() : []) || [];
+            for (var j = 0; j < k.length; j++) walk(k[j], d + 1);
+        })(badge, 0);
+        if (tier === null || tier === 0) return;      // 0 = no badge yet / unranked: keep looking, don't guess
+        _rankTier = tier;
+        var sl = badge.FindChildrenWithClassTraverse ? (badge.FindChildrenWithClassTraverse("Subrank") || []) : [];
+        if (sl.length) { var v = parseInt(sl[0].text, 10); if (!isNaN(v)) _rankSub = v; }
+    }
+    function autoBand() {
+        if (_rankTier === null) return null;
+        return _rankTier <= 3 ? "low" : (_rankTier <= 6 ? "mid" : (_rankTier <= 8 ? "high" : "pro"));
+    }
+    var RANK_NAMES = ["Obscurus", "Initiate", "Seeker", "Alchemist", "Arcanist", "Ritualist", "Emissary", "Archon", "Oracle", "Phantom", "Ascendant", "Eternus"];
     function scanEnemies(root, myHeroId) {
         if (!root) return [];
         var en = [];
@@ -321,7 +384,8 @@
     // We collect the ENEMY team's item ids (entry team class != local team) into _enemyItems and
     // feed them to computeRecs' counter term. See [[reference-deadlock-recent-purchases-feed]].
     var _enemyItems = {};   // enemy item id(str) -> 1, accumulated this match (reset on hero change)
-    var _rpSeen = {};       // dedup: "buyer|item|time" -> 1
+    var _rpSeen = {};       // dedup: "buyer|item|time|tier" -> 1
+    var _rpLast = [];       // last few raw feed entries, for the settings diagnostics
     var _rpFound = false, _rpEnemySig = "";
     var _recentContCache = null;   // cached RecentPurchasesContainer handle (self-heals via IsValid)
     function _rpText(p, cls) {
@@ -344,27 +408,31 @@
             : (root.FindChildTraverse && root.FindChildTraverse("RecentPurchasesContainer"));
         _recentContCache = valid(cont) ? cont : null;
         if (!cont || !cont.FindChildrenWithClassTraverse) return;
-        var lt = localTeamNum(root);
-        if (!lt) return;   // no local team -> can't classify friend/foe
+        var lt = localTeamNum(root);   // fallback side check; isEnemyPurchase works without it
         var entries = cont.FindChildrenWithClassTraverse("recentPurchase") || [];
         if (!_rpFound && entries.length) { _rpFound = true;  }
         var enemyAdded = 0, ownedAdded = 0;
         for (var i = 0; i < entries.length; i++) {
             var e = entries[i];
             var item = _rpText(e, "recentModPurchaseName"); if (!item) continue;
+            // Client 6819 dropped the buyer-name label (only an unreadable portrait is left), so the
+            // dedup key is item + time + tier text, and the side comes from the game's own
+            // isEnemyPurchase class (team classes stay as the fallback).
             var buyer = _rpText(e, "recentModPurchaserHero");
-            var key = buyer + "|" + item + "|" + _rpText(e, "recentTimePurchased");
+            var key = buyer + "|" + item + "|" + _rpText(e, "recentTimePurchased") + "|" + _rpText(e, "recentModTierCost");
             // The feed is newest-first with a rolling cap: the first entry we've ALREADY seen means
             // every entry below it is older and also seen -> stop. Steady state (no new buys) scans ~1
             // entry instead of ~50, removing the per-second FindChildrenWithClassTraverse storm that
             // was the 1-second stutter.
             if (_rpSeen[key]) break; _rpSeen[key] = 1;   // one purchase event = buyer+item+time
             var entryTeam = (e.BHasClass && e.BHasClass("isTeam1Purchase")) ? 1 : ((e.BHasClass && e.BHasClass("isTeam2Purchase")) ? 2 : 0);
-            if (!entryTeam) continue;
-            if (entryTeam !== lt) {                                   // ENEMY team -> counter input
+            var isEnemy = !!(e.BHasClass && e.BHasClass("isEnemyPurchase")) || (lt && entryTeam && entryTeam !== lt);
+            if (_rpLast.length >= 3) _rpLast.shift();   // shown in the settings diagnostics
+            _rpLast.push((isEnemy ? "E " : "") + "t" + (entryTeam || "?") + " " + item.substr(0, 18) + "->" + (nameToId(item) ? "ok" : "??"));
+            if (isEnemy) {                                            // ENEMY team -> counter input
                 var id = nameToId(item);
                 if (id && !_enemyItems[String(id)]) { _enemyItems[String(id)] = 1; enemyAdded++; }
-            } else if (_heroId && resolveHeroToken(buyer) === _heroId) {   // OUR hero's own buy -> owned
+            } else if (buyer && _heroId && resolveHeroToken(buyer) === _heroId) {   // OUR hero's own buy -> owned (needs a buyer label)
                 // Tab-INDEPENDENT owned detection: the feed logs every one of our purchases with its
                 // item NAME, so we no longer depend on having opened the item's shop tab (the flaky
                 // mod_view scan). We union into the SAME _ownedAccum the tab scan uses (accumulate-only,
@@ -552,6 +620,7 @@
         var ctrOn = CFG.counters, ctrX = [];
         if (ctrOn) for (var ex in _enemyItems) if (_enemyItems.hasOwnProperty(ex) && CTR[ex]) ctrX.push(ex);
         var w = (enemies && enemies.length) ? enemyWeight(tSec || 0) : 0;
+        if ((tSec || 0) < 600 && _laneEnemies.length) enemies = _laneEnemies;   // laning: the heroes in your lane matter
         var ownedCount = 0; for (var o in owned) if (owned.hasOwnProperty(o)) ownedCount++;
         var aff01 = affluence(souls, tSec);   // flush/late -> bias toward higher tiers
         // Owned item ids that drive synergy (map owned names -> ids present in syn table).
@@ -665,24 +734,24 @@
     // shop styles) so the panel reads as native Deadlock UI.
     var PAL = {
         font: "VALVEOracle, Reaver, sans-serif",   // @define oracle -> QoLLock's most-used font (real family, resolves inline)
-        text: "#26291E",            // dark warm gray (slightly lifted off pure black), reads dark on the paper bg
-        dim: "#34382B",             // slightly lighter for secondary labels
-        faint: "#4C5041",           // dark gray for ranks / section subheads
+        text: "#ECE6D6",            // warm off-white on the dark panel (same scheme as the game's tooltips)
+        dim: "#C4BDAA",             // secondary labels
+        faint: "#8F897A",           // ranks / section subheads
         btnText: "#FFEFD7",         // offWhite — kept light for button labels/icons (buttons unchanged)
         gold: "#FFED79",            // goldColor (souls)
         accent: "#5FE69E",          // brandGreen — the settings-menu toggle green (was blue)
         enemy: "#FF410D",           // colorEnemy
-        panelBg: "#B9AE90F2",       // paper tan under the backdrop texture: the dark text above must stay
-                                    // readable even if Valve renames the texture again (it did in 2026)
+        panelBg: "#181A17F2",       // dark like the game's item tooltips: the old paper look needed a
+                                    // texture Valve renamed in 6819, and colored names/prices washed out on tan
         border: "#5FE69E38",        // brandGreen hairline (subtle, ties to the accent)
-        btn: "#2C2F28E6",           // dark gray — unselected buttons (readable on the paper bg)
+        btn: "#34372FE6",           // unselected buttons, a step above the panel
         btnOn: "#3C9E6Acc",         // darker green for text-buttons (offWhite stays readable on it)
         switchOn: "#5FE69E"         // bright brandGreen for switch tracks (matches settings toggle)
     };
     // Deadlock's own shop backdrop texture (single url layer — Panorama's inline style parser
     // rejects a multi-layer gradient()+url() string). catalog_shop_generic_bg was renamed to ..._bg2
     // by client 6819; with the old path the panel fell back to a dark color and the text vanished.
-    var SHOP_BG = 'url("s2r://panorama/images/shop/catalog/catalog_shop_generic_bg2_psd.vtex")';
+    var SHOP_BG = "none";   // plain dark panel (see PAL.panelBg); the catalog textures are paper-light
     var FLOAT_ID = "RecFloat";
     var _float = null, _title = null, _body = null, _cfgBox = null, _cfgShown = false, _helpShown = false;
     var _gearBtn = null, _rightGrp = null, _rule = null;
@@ -817,8 +886,9 @@
         if (valid(_float)) return _float;
         _float = $.CreatePanel("Panel", shop, FLOAT_ID);
         css(_float, {
-            horizontalAlign: CFG.side, verticalAlign: "center", marginLeft: "10px", marginRight: "10px",
-            marginTop: "-160px",   // base position raised ~15% of screen height
+            horizontalAlign: CFG.side, verticalAlign: "top", marginLeft: "10px", marginRight: "10px",
+            marginTop: "300px",    // top-anchored between the game's kill feed (top-left) and the hero stats
+                                   // (bottom-left); centred, a tall panel slid down over the stats
             width: "340px", backgroundColor: PAL.panelBg, backgroundImage: SHOP_BG, backgroundSize: "cover", backgroundRepeat: "no-repeat",
             borderRadius: "4px", border: "1px solid " + PAL.border,
             padding: "12px 14px", flowChildren: "down", zIndex: "40", opacity: (CFG.opacity / 100).toString(),
@@ -905,11 +975,13 @@
     }
     function toggleGubami() { CFG.gubami = !CFG.gubami; if (CFG.gubami) CFG.coach = true; saveCfg(); closeHelp(); toggleHelp(); if (CFG.gubami) coachPreview(); }   // enabling Gubami turns the coach on, reopens the panel, and previews him right away
 
-    function knobRow(box, label, opts, cur, pick) {
+    function knobRow(box, label, opts, cur, pick, btnStyle) {
         var row = $.CreatePanel("Panel", box, ""); css(row, { flowChildren: "right", marginBottom: "3px" });
         var l = $.CreatePanel("Label", row, ""); l.text = label; css(l, { width: "70px", color: PAL.dim, fontSize: "14px", fontFamily: PAL.font, verticalAlign: "center" });
         for (var i = 0; i < opts.length; i++) (function (o) {
-            mkBtn(row, o.t, function () { pick(o.v); }, { backgroundColor: cur === o.v ? PAL.btnOn : PAL.btn });
+            var st = { backgroundColor: cur === o.v ? PAL.btnOn : PAL.btn };
+            if (btnStyle) for (var k in btnStyle) if (btnStyle.hasOwnProperty(k)) st[k] = btnStyle[k];
+            mkBtn(row, o.t, function () { pick(o.v); }, st);
         })(opts[i]);
     }
     // sliding on/off switch (track + knob) for boolean settings
@@ -929,6 +1001,26 @@
         var l = $.CreatePanel("Label", row, ""); l.text = label; css(l, { width: "70px", color: PAL.dim, fontSize: "14px", fontFamily: PAL.font, verticalAlign: "center" });
         mkSwitch(row, value, function () { onChange(!value); });
     }
+    // One-off search of the HUD for anything that could carry the player's rank (ids with rank / badge /
+    // mmr), shown in the settings diagnostics — the groundwork for picking the rank band automatically.
+    var _rankProbe = null;
+    function rankProbe() {
+        if (_rankProbe) return _rankProbe;
+        var hits = [];
+        (function walk(p, d) {
+            if (!p || d > 40 || hits.length >= 8) return;
+            var id = ""; try { id = String(p.id || ""); } catch (e) {}
+            if (id && /rank|badge|mmr/i.test(id) && id !== "HeroBadge") {   // HeroBadge = hero level, not rank
+                var t = ""; try { t = p.text ? String(p.text) : ""; } catch (e) {}
+                var pt = ""; try { pt = String(p.paneltype || ""); } catch (e) {}
+                hits.push("rk " + id + " <" + pt + ">" + (t ? " = " + t.substr(0, 24) : ""));
+            }
+            var k = (p.Children ? p.Children() : []) || [];
+            for (var i = 0; i < k.length; i++) walk(k[i], d + 1);
+        })(hudRoot(), 0);
+        _rankProbe = hits.length ? hits : ["rk: nothing with rank/badge/mmr in the HUD"];
+        return _rankProbe;
+    }
     function renderConfig() {
         if (!valid(_cfgBox)) return;
         _cfgBox.RemoveAndDeleteChildren();
@@ -936,14 +1028,16 @@
         if (!_cfgShown) return;
         var hdr = $.CreatePanel("Label", _cfgBox, ""); hdr.text = "SETTINGS"; css(hdr, { color: PAL.faint, fontSize: "12px", fontFamily: PAL.font, letterSpacing: "2px", marginBottom: "5px" });
         knobRow(_cfgBox, "Sort", [{ t: "Blend", v: "blend" }, { t: "Pop", v: "popular" }, { t: "Value", v: "value" }, { t: "Eff", v: "efficiency" }], CFG.mode, function (v) { CFG.mode = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
-        knobRow(_cfgBox, "My rank", [{ t: "Low", v: "low" }, { t: "Mid", v: "mid" }, { t: "High", v: "high" }, { t: "Pro", v: "pro" }], bandId(), function (v) { CFG.rank = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
+        knobRow(_cfgBox, "My rank", [{ t: "Auto", v: null }, { t: "Low", v: "low" }, { t: "Mid", v: "mid" }, { t: "High", v: "high" }, { t: "Pro", v: "pro" }], CFG.rank, function (v) { CFG.rank = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); }, { padding: "3px 6px", marginRight: "3px" });
         var bandName = "";
         var bl = (DATA.meta && DATA.meta.bands) || [];
         for (var bi = 0; bi < bl.length; bi++) if (bl[bi].id === bandId()) bandName = bl[bi].name;
-        if (bandName) { var bn = $.CreatePanel("Label", _cfgBox, ""); bn.text = "data: " + bandName; css(bn, { color: PAL.faint, fontSize: "12px", fontFamily: PAL.font, marginLeft: "70px", marginBottom: "4px" }); }
+        var rk = _rankTier !== null ? RANK_NAMES[_rankTier] + (_rankSub !== null ? " " + _rankSub : "") : "rank not found";
+        if (bandName) { var bn = $.CreatePanel("Label", _cfgBox, ""); bn.text = "data: " + bandName + (CFG.rank ? "" : " · auto: " + rk); css(bn, { color: PAL.faint, fontSize: "12px", fontFamily: PAL.font, marginLeft: "70px", marginBottom: "4px" }); }
         knobRow(_cfgBox, "Items", [{ t: "5", v: 5 }, { t: "8", v: 8 }, { t: "10", v: 10 }, { t: "15", v: 15 }], CFG.count, function (v) { CFG.count = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         switchRow(_cfgBox, "Pct", CFG.showPct, function (v) { CFG.showPct = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         switchRow(_cfgBox, "Click-buy", CFG.buy, function (v) { CFG.buy = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
+        switchRow(_cfgBox, "Shop marks", CFG.badges, function (v) { CFG.badges = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         switchRow(_cfgBox, "Counters", CFG.counters, function (v) { CFG.counters = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         switchRow(_cfgBox, "Skill order", CFG.skills, function (v) { CFG.skills = v; saveCfg(); refreshFloat(hudRoot(), null); renderConfig(); });
         switchRow(_cfgBox, "Item tips", CFG.tips, function (v) { CFG.tips = v; saveCfg(); if (!v) hideTip(); renderConfig(); });
@@ -961,6 +1055,26 @@
         // Turn Off: collapse to just the draggable "★ Buy Next" title (click title to restore).
         var doHide = function () { _cfgShown = false; renderConfig(); setMinimized(true); };
         mkBtn(_cfgBox, "Turn Off", doHide, { backgroundColor: PAL.btnOn, marginTop: "4px" });
+        // What the mod currently reads from the HUD — lets a screenshot tell whether enemy detection,
+        // the purchase feed and the client language work on this machine.
+        var en = [], ei = [], ctrN = 0, seenN = 0, ownN = 0, k;
+        for (var e = 0; e < _enemies.length; e++) en.push((DATA.heroes && DATA.heroes[String(_enemies[e])]) || _enemies[e]);
+        for (k in _enemyItems) if (_enemyItems.hasOwnProperty(k)) { ei.push(itemName(k)); if (CTR[k]) ctrN++; }
+        for (k in _rpSeen) if (_rpSeen.hasOwnProperty(k)) seenN++;
+        for (k in _ownedAccum) if (_ownedAccum.hasOwnProperty(k)) ownN++;
+        var ownL = []; for (k in _ownedAccum) if (_ownedAccum.hasOwnProperty(k)) ownL.push(itemName(nameToId(k) || k));
+        var diag = ["lang " + (_uiLang || "en?") + " · team " + localTeamNum(hudRoot()) + " · hero " + ((DATA.heroes && DATA.heroes[String(_heroId)]) || "?") + " (switches " + _heroSwitches + ")",
+                    "owned " + ownN + (ownL.length ? ": " + ownL.slice(-6).join(", ") : ""),
+                    "hero history: " + (_heroHist.join(" > ") || "-"),
+                    "lane: " + (_laneEnemies.map(function (x) { return (DATA.heroes && DATA.heroes[String(x)]) || x; }).join(", ") || "-"),
+                    "enemies " + en.length + ": " + en.join(", "),
+                    "feed " + seenN + " buys · enemy items " + ei.length + " (counters " + ctrN + ")",
+                    ei.length ? "last: " + ei.slice(-3).join(", ") : "",
+                    _rpLast.length ? "feed: " + _rpLast.join(" / ") : ""];
+        for (var dg = 0; dg < diag.length; dg++) if (diag[dg]) {
+            var dgl = $.CreatePanel("Label", _cfgBox, ""); dgl.text = diag[dg];
+            css(dgl, { color: PAL.text, fontSize: "13px", fontFamily: PAL.font, marginTop: dg ? "0px" : "6px" });
+        }
     }
     function cfgSep() { var s = $.CreatePanel("Panel", _cfgBox, ""); css(s, { height: "1px", width: "100%", backgroundColor: PAL.border, marginTop: "4px", marginBottom: "6px" }); }
 
@@ -1017,6 +1131,7 @@
         parts.push("H" + hold.tier);
         for (var hj = 0; hj < hold.items.length; hj++) parts.push("h" + hold.items[hj].id + (hold.items[hj].aff ? "a" : "_"));
         var rsig = parts.join(",");
+        updateShopBadges(shop, recs, holdIds);   // every refresh: the active shop tab changes what's bound
         if (rsig === _renderSig && _body.GetChildCount() > 0) return;   // nothing visible changed
         _renderSig = rsig;
         // --- rebuild ---
@@ -1028,6 +1143,36 @@
         }
         if (hold.items.length) renderHolding(hold);
         if (CFG.skills) renderSkillOrder(hero);
+    }
+    // Rank marks ON the shop's own item cards: the n-th recommendation gets a small green "n" in the
+    // card's corner, so the pick is visible where the player actually clicks. Cards bind their modName
+    // text only in the active tab, so this runs every refresh (same mod_view scan as getOwnedNames);
+    // marks on cards that dropped out of the list are deleted.
+    var BADGE_ID = "IARRankMark";
+    function updateShopBadges(shop, recs, holdIds) {
+        if (!shop || !shop.FindChildrenWithClassTraverse) return;
+        var want = {}, n = 0;
+        if (CFG.badges) for (var r = 0; r < recs.length && n < CFG.count; r++) {
+            if (holdIds[recs[r].id]) continue;
+            n++; if (recs[r].aff) want[recs[r].id] = n;
+        }
+        var entries = shop.FindChildrenWithClassTraverse("mod_view") || [];
+        for (var i = 0; i < entries.length; i++) {
+            var e = entries[i], mark = null, id = null;
+            try { mark = e.FindChild(BADGE_ID); } catch (x) {}
+            var nms = e.FindChildrenWithClassTraverse ? (e.FindChildrenWithClassTraverse("modName") || []) : [];
+            if (nms.length) { try { id = nameToId(nms[0].text); } catch (x) {} }
+            var rank = id ? want[id] : 0;
+            if (!rank) { if (mark) { try { mark.DeleteAsync(0); } catch (x) {} } continue; }
+            if (!mark) {
+                mark = $.CreatePanel("Label", e, BADGE_ID);
+                try { mark.hittest = false; } catch (x) {}
+                css(mark, { horizontalAlign: "right", verticalAlign: "top", margin: "3px", padding: "0px 5px",
+                            backgroundColor: "#3C9E6AF0", borderRadius: "3px", color: "#FFEFD7", fontSize: "15px",
+                            fontFamily: PAL.font, fontWeight: "bold", boxShadow: "0px 1px 4px 0px #000000b0" });
+            }
+            if (mark.text !== String(rank)) mark.text = String(rank);
+        }
     }
     // Recommended ability leveling order (from ability-order-stats), as a build-order grid:
     // one ROW per ability (A1..A4), columns = upgrade steps left->right; the ability's icon
@@ -1342,17 +1487,31 @@
     var _heroId = null, _loggedShop = false, _enemies = [], _enemySig = "";
     // Re-detect hero every scan (hideout swap / new match). Also scan the enemy comp;
     // re-scanned each loop so the first-30s lane shuffle settles. Keep last known.
+    // Hero changes must be confirmed by HERO_CONFIRM identical scans in a row: shop labels can name
+    // other heroes (ally pings, notes in someone's build), and every switch resets the owned list —
+    // which brought already-bought items back into the recommendations.
+    var HERO_CONFIRM = 3, _heroCand = null, _heroCandN = 0, _heroSwitches = 0, _heroHist = [], _laneEnemies = [];
     function scanPlayers(root, shop) {
         if (shop) {
-            var h = getLocalHeroId(shop);
+            var top = localHeroTopBar(root), h = top || getLocalHeroId(shop);
+            if (h && h !== _heroId && _heroId && !top) {
+                if (h === _heroCand) _heroCandN++; else { _heroCand = h; _heroCandN = 1; }
+                if (_heroCandN < HERO_CONFIRM) h = null;
+            } else { _heroCand = null; _heroCandN = 0; }
             if (h && h !== _heroId) {
+                _heroSwitches++; _heroCand = null; _heroCandN = 0;
+                if (_heroHist.length >= 4) _heroHist.shift();
+                _heroHist.push(((DATA.heroes && DATA.heroes[String(h)]) || h) + (top ? "(bar)" : "(shop)"));
                 _heroId = h; _ownedAccum = {}; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
                 _enemyItems = {}; _rpSeen = {}; _rpEnemySig = "";   // reset accumulated enemy purchases
                 if (valid(_float)) refreshFloat(root, shop);
             }
         }
+        detectRank(root);
         if (_heroId) {
             var en = scanEnemies(root, _heroId);
+            var lane = scanLane(root, en);
+            if (lane.join(",") !== _laneEnemies.join(",")) { _laneEnemies = lane; if (valid(_float)) refreshFloat(root, shop); }
             if (!en.length) enemyDiag(root);   // reveal why (hideout=no team, or structure differs)
             if (en.length) {
                 var sig = en.slice().sort(function (a, b) { return a - b; }).join(",");
