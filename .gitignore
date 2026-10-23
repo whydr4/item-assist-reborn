@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+data/cache/
+data/run.json
+data/collect.log
+build/
+dist/
