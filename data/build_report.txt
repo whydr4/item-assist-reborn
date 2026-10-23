@@ -1,0 +1,9 @@
+Infernus [pro 6775 / high 21272 games]
+  top value: Grit (+2.4%, pick 36%), Weapon Shielding (+1.9%, pick 7%), Spirit Shredder Bullets (+1.9%, pick 29%), Warp Stone (+1.7%, pick 15%), Extra Regen (+1.6%, pick 29%), Infuser (+1.5%, pick 5%)
+  top pick : Improved Spirit (-0.7%, pick 97%), Extra Spirit (+0.1%, pick 95%), Rapid Rounds (-0.7%, pick 86%), Titanic Magazine (-0.9%, pick 81%), Mystic Vulnerability (+0.4%, pick 81%), Spirit Lifesteal (-0.1%, pick 81%)
+Abrams [pro 6917 / high 19029 games]
+  top value: Berserker (+2.4%, pick 26%), Superior Duration (+2.1%, pick 65%), Grit (+1.6%, pick 8%), Colossus (+1.6%, pick 12%), Slowing Bullets (+1.4%, pick 5%), Duration Extender (+1.3%, pick 40%)
+  top pick : Melee Charge (-0.1%, pick 93%), Close Quarters (-0.7%, pick 89%), Hunter's Aura (+0.0%, pick 79%), Stalker (+0.2%, pick 79%), Bullet Resist Shredder (+0.1%, pick 75%), Melee Lifesteal (-0.2%, pick 75%)
+Haze [pro 15746 / high 42866 games]
+  top value: Lucky Shot (+3.2%, pick 28%), Rapid Recharge (+2.3%, pick 17%), Hollow Point (+2.1%, pick 13%), Frenzy (+2.0%, pick 1%), Recharging Rush (+1.9%, pick 24%), Silencer (+1.8%, pick 33%)
+  top pick : Swift Striker (-1.1%, pick 97%), Rapid Rounds (-0.2%, pick 94%), Burst Fire (-0.1%, pick 87%), Active Reload (-0.9%, pick 82%), Extra Spirit (+0.1%, pick 81%), Extra Health (+0.2%, pick 71%)

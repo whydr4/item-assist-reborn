@@ -488,7 +488,7 @@
             if (ctrOn) for (var xi = 0; xi < ctrX.length; xi++) { var cX = CTR[ctrX[xi]]; if (cX && cX[id] != null) ctr += cX[id]; }
             var val = list[k][1], pop = (list[k].length > 2 ? list[k][2] : 0);
             var ph = phS[id];                                   // this phase's lift/pick beats the all-game average
-            if (ph) { val = 0.5 + ph[0]; pop = ph[1]; }
+            if (ph) { val = 0.5 + ph[0] * ph[1] / (ph[1] + 0.05); pop = ph[1]; }   // lift trusted by adoption (build.py reliability)
             var tm = timingInfo(hero, id, tSec);
             var eff = effectiveCost(meta, owned);   // discount for owned components
             // no flush/late tier-bias in Efficiency mode — it already accounts for cost. With phase data
