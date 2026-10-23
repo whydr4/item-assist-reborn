@@ -1,0 +1,47 @@
+19962 matches
+win rate by state at 9:00: {'behind': '35% of 68375', 'even': '51% of 107900', 'ahead': '65% of 63041'}
+1521479 purchases 9-20 min
+
+[1] behind-vs-ahead item lift (tier baseline without the item itself): 1204 hero x item cells
+    sd(z) observed 0.885; shuffled states 0.904 +- 0.016 -> p = 0.935
+    real interaction sd ~ 0.0 pp (excess over shuffled)
+    items relatively better when BEHIND (pooled over heroes, z):
+      Refresher                +14.5 pp  z=+1.4  heroes=1
+      Boundless Spirit         +12.4 pp  z=+2.8  heroes=6
+      Divine Barrier           +11.7 pp  z=+1.9  heroes=2
+      Phantom Strike           +11.6 pp  z=+1.4  heroes=2
+      Spirit Sap               +9.4 pp  z=+1.6  heroes=1
+      Weakening Headshot       +8.1 pp  z=+3.5  heroes=5
+      Silence Wave             +7.8 pp  z=+1.2  heroes=1
+      Alchemical Fire          +5.8 pp  z=+1.5  heroes=4
+    items relatively better when AHEAD:
+      Echo Shard               -7.8 pp  z=-0.7  heroes=1
+      Mystic Slow              -5.1 pp  z=-1.2  heroes=3
+      Rusted Barrel            -4.7 pp  z=-0.5  heroes=1
+      Mercurial Magnum         -4.7 pp  z=-1.1  heroes=2
+      Healing Nova             -4.7 pp  z=-0.9  heroes=2
+      Headshot Booster         -4.5 pp  z=-0.5  heroes=1
+      Ricochet                 -4.2 pp  z=-1.4  heroes=3
+      Healing Rite             -4.0 pp  z=-0.6  heroes=2
+
+[2] 124 items with n>=300 per half
+    split-half reliability: win-rate lift 0.81, dW lift 0.47
+    corr(win-rate lift, dW lift) = 0.47; corrected for noise = 0.76
+    biggest 'bought when already winning' gap (WR lift >> dW lift):
+      T3 Spirit Rend              WR +5.7 pp   dW -1.16 pp   n=741
+      T3 Berserker                WR +6.3 pp   dW +0.29 pp   n=8262
+      T4 Spirit Burn              WR +0.2 pp   dW -2.23 pp   n=1284
+      T3 Superior Cooldown        WR +4.7 pp   dW +0.26 pp   n=18621
+      T3 Superior Duration        WR +4.7 pp   dW +0.29 pp   n=9849
+      T4 Mystic Reverb            WR +2.7 pp   dW -0.57 pp   n=876
+      T3 Greater Expansion        WR +5.2 pp   dW +0.72 pp   n=12177
+      T4 Echo Shard               WR -0.6 pp   dW -1.75 pp   n=709
+    undervalued by WR (dW lift >> WR lift):
+      T4 Arctic Blast             WR -10.6 pp   dW +0.30 pp   n=1497
+      T3 Cultist Sacrifice        WR -6.5 pp   dW +0.58 pp   n=14142
+      T2 Stalker                  WR -4.7 pp   dW +0.02 pp   n=3771
+      T1 Rusted Barrel            WR -6.2 pp   dW -0.87 pp   n=1335
+      T3 Decay                    WR -3.0 pp   dW +0.70 pp   n=2381
+      T3 Radiant Regeneration     WR -6.0 pp   dW -0.96 pp   n=27460
+      T3 Silence Wave             WR -3.4 pp   dW +0.08 pp   n=913
+      T2 Intensifying Magazine    WR -3.2 pp   dW +0.14 pp   n=1532
