@@ -257,6 +257,40 @@ def band_tables(q, hid, item_tier, hero_matches, ladder, items):
     return rec, recp, pick
 
 
+IMBUE_MIN = 15      # purchases of an imbue item on a hero before we trust the modal ability
+
+
+def imbue_from_matches(slots_by_hero, shop_ids):
+    """{hero: {item: [slot, share, n]}} — which ability strong players imbue each item into.
+
+    Raw matches (research/fetch_matches.py, Phantom+) record imbued_ability_id per purchase; the most
+    common slot is the recommendation, share = how many of those buyers picked it."""
+    import glob
+    counts = defaultdict(lambda: defaultdict(int))
+    for path in glob.glob(os.path.join(ROOT, "data", "matches", "*.jsonl")):
+        with open(path, encoding="utf-8") as f:
+            for ln in f:
+                try:
+                    m = json.loads(ln)
+                except ValueError:
+                    continue
+                for pl in m.get("p", []):
+                    slot_of = slots_by_hero.get(pl.get("h"))
+                    if not slot_of:
+                        continue
+                    for it in pl.get("it", []):
+                        if len(it) >= 4 and it[3] and it[0] in shop_ids and it[3] in slot_of:
+                            counts[(pl["h"], it[0])][slot_of[it[3]]] += 1
+    out = defaultdict(dict)
+    for (h, iid), c in counts.items():
+        n = sum(c.values())
+        if n < IMBUE_MIN:
+            continue
+        slot, k = max(c.items(), key=lambda kv: kv[1])
+        out[str(h)][str(iid)] = [slot, round(k / n, 2), n]
+    return out
+
+
 # ---------------------------------------------------------------- static metadata
 LOC_DIR = os.path.join(GAME, "resource", "localization")
 _KV = re.compile(r'^\s*"([^"]+)"\s+"([^"]*)"')
@@ -344,6 +378,7 @@ def main():
     extra = {"byName": {}, "abilityOrder": {}, "abilityIcon": {}, "tips": {}}
     report = []
     hero_ids = sorted(heroes_a)
+    slots_by_hero = {}
     build_ids = [int(x) for x in a.heroes.split(",")] if a.heroes else hero_ids
     for n_done, hid in enumerate(build_ids, 1):
         h, key = heroes_a[hid], str(hid)
@@ -356,6 +391,7 @@ def main():
             ab = by_class.get((h.get("items") or {}).get(f"signature{s}", ""))
             if ab:
                 slot_of[ab["id"]] = s
+                slots_by_hero.setdefault(hid, {})[ab["id"]] = s
                 icons[str(s)] = find_icon(index, "panorama/images/hud/abilities/", ab.get("image")) \
                     or old.get("abilityIcon", {}).get(key, {}).get(str(s), "")
         extra["abilityIcon"][key] = icons
@@ -363,7 +399,7 @@ def main():
         if order:
             extra["abilityOrder"][key] = order
         if key in old.get("imbue", {}):
-            out["imbue"][key] = old["imbue"][key]
+            out["imbue"][key] = old["imbue"][key]   # fallback; replaced below from fresh matches
         if key in old.get("tips", {}):
             extra["tips"][key] = old["tips"][key]
 
@@ -405,6 +441,12 @@ def main():
                           f"{names(sorted(rec, key=lambda r: -r[2])[:5])}")
         print(f"[{n_done}/{len(build_ids)}] {h['name']}", flush=True)
 
+    fresh = imbue_from_matches(slots_by_hero, {int(i) for i in items})
+    for hkey, tab in fresh.items():
+        # runtime reads imbue[hero][item] as a slot number; the share/n live in imbueStats for the UI
+        out["imbue"][hkey] = dict(out["imbue"].get(hkey, {}), **{i: v[0] for i, v in tab.items()})
+    extra["imbueStats"] = fresh
+    print(f"imbue from matches: {sum(len(t) for t in fresh.values())} hero x item pairs over {len(fresh)} heroes")
     extra["loc"] = localization({heroes_a[h]["class_name"]: h for h in build_ids},
                                 {it["class_name"]: int(iid) for iid, it in shop.items() if iid in items})
     out["meta"] = {
