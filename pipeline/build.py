@@ -26,6 +26,10 @@ PHASE_END_MIN = (9, 20, 30, 999)   # item-flow columns for normal mode
 TIMING_BIN_MIN = 5
 TIMING_BINS = 10    # 0-5, 5-10, ... 45+
 LATE_LIFT = 0.02    # "too late" = two bins in a row this much worse than same-tier buys
+# Size budget: per-hero tables only cover items strong players actually buy on that hero.
+RELEVANT_PICK = 0.02
+VS_MIN_LIFT, VS_PER_ENEMY = 0.02, 12
+NEXT_TOP, SYN_TOP = 6, 6
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -195,8 +199,9 @@ def good_until(lifts, ns):
     return None
 
 
-def matchups(q, hero, enemies):
-    """vs[enemy][item]: item's lift when this enemy is in the match, beyond the item's normal lift."""
+def matchups(q, hero, enemies, relevant):
+    """vs[enemy][item]: item's lift when this enemy is in the match, beyond the item's normal lift.
+    Only items the hero actually buys, only clear effects, top VS_PER_ENEMY per enemy."""
     over = {}
     for lv in queries.VS_LEVELS:
         rows = q.items(hero, lv)
@@ -214,9 +219,10 @@ def matchups(q, hero, enemies):
                 i = r["item_id"]
                 if r["matches"] and i in over[lv]:
                     obs[i][lv] = (r["wins"] / r["matches"] - tw / tn - over[lv][i], r["matches"])
-        d = {str(i): r3(v) for i, o in obs.items() if abs(v := ladder_shrink(o, K_WR)) >= 0.008}
-        if d:
-            res[str(e)] = d
+        lifts = [(i, ladder_shrink(o, K_WR)) for i, o in obs.items() if i in relevant]
+        lifts = sorted((x for x in lifts if abs(x[1]) >= VS_MIN_LIFT), key=lambda x: -abs(x[1]))[:VS_PER_ENEMY]
+        if lifts:
+            res[str(e)] = {str(i): r3(v) for i, v in lifts}
     return res
 
 
@@ -321,25 +327,26 @@ def main():
              if str(i) in items and p >= 0.01][:30]
             for ph in phases]
 
+        relevant = {i for i, p in pick.items() if p >= RELEVANT_PICK and str(i) in items}
         nxt, syn = {}, {}
         for a_id, lst in transitions(q, hid).items():
-            if str(a_id) not in items:
+            if a_id not in relevant:
                 continue
-            lst = [x for x in lst if str(x[0]) in items]
-            top = sorted(lst, key=lambda x: -x[2])[:8]
+            lst = [x for x in lst if x[0] in relevant]
+            top = sorted(lst, key=lambda x: -x[2])[:NEXT_TOP]
             if top:
                 nxt[str(a_id)] = [[b, round(l * 1000), round(s * 1000)] for b, l, s in top]
-            good = {str(b): r3(l) for b, l, s in lst if s >= 0.05 and l >= 0.02}
+            good = sorted(((b, l) for b, l, s in lst if s >= 0.05 and l >= 0.02), key=lambda x: -x[1])[:SYN_TOP]
             if good:
-                syn[str(a_id)] = good
+                syn[str(a_id)] = {str(b): r3(l) for b, l in good}
         out["next"][key], out["syn"][key] = nxt, syn
 
         tm = {}
         for i, (lifts, ns) in timing(q, hid, item_tier).items():
-            if str(i) in items:
+            if i in relevant:
                 tm[str(i)] = [good_until(lifts, ns), [None if l is None else round(l * 1000) for l in lifts]]
         out["tm"][key] = tm
-        out["vs"][key] = matchups(q, hid, [e for e in hero_ids if e != hid])
+        out["vs"][key] = matchups(q, hid, [e for e in hero_ids if e != hid], relevant)
 
         names = lambda lst: ", ".join(f"{items[str(r[0])]['n']} ({(r[1] - 0.5) * 100:+.1f}%, pick {r[2] * 100:.0f}%)" for r in lst)
         report.append(f"{h['name']} [pro {hero_matches['pro'].get(hid, 0)} / high {hero_matches['high'].get(hid, 0)} games]\n"

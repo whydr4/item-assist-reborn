@@ -1,9 +1,126 @@
 Infernus [pro 6775 / high 21272 games]
   top value: Grit (+2.4%, pick 36%), Weapon Shielding (+1.9%, pick 7%), Spirit Shredder Bullets (+1.9%, pick 29%), Warp Stone (+1.7%, pick 15%), Extra Regen (+1.6%, pick 29%), Infuser (+1.5%, pick 5%)
   top pick : Improved Spirit (-0.7%, pick 97%), Extra Spirit (+0.1%, pick 95%), Rapid Rounds (-0.7%, pick 86%), Titanic Magazine (-0.9%, pick 81%), Mystic Vulnerability (+0.4%, pick 81%), Spirit Lifesteal (-0.1%, pick 81%)
+Seven [pro 4824 / high 14829 games]
+  top value: Diviner's Kevlar (+3.3%, pick 2%), Surge of Power (+3.3%, pick 17%), Boundless Spirit (+3.0%, pick 17%), Indomitable (+2.3%, pick 28%), Superior Duration (+2.3%, pick 55%), Spiritual Overflow (+2.2%, pick 16%)
+  top pick : Mystic Vulnerability (+0.6%, pick 92%), Escalating Exposure (-1.2%, pick 90%), Monster Rounds (-0.3%, pick 86%), Healbane (+0.6%, pick 83%), Spirit Lifesteal (+0.5%, pick 80%), Arcane Surge (-0.4%, pick 72%)
+Vindicta [pro 6994 / high 20116 games]
+  top value: Vampiric Burst (+3.5%, pick 14%), Lucky Shot (+3.0%, pick 8%), Bullet Lifesteal (+2.4%, pick 26%), Blood Tribute (+2.2%, pick 14%), Spellslinger (+2.1%, pick 19%), Extended Magazine (+1.8%, pick 25%)
+  top pick : Extra Charge (-0.1%, pick 97%), High-Velocity Rounds (+0.2%, pick 92%), Rapid Recharge (-1.4%, pick 92%), Sharpshooter (+0.2%, pick 78%), Long Range (-0.3%, pick 76%), Swift Striker (-0.1%, pick 73%)
+Lady Geist [pro 3227 / high 9145 games]
+  top value: Extra Charge (+4.7%, pick 16%), Mystic Vulnerability (+4.3%, pick 24%), Compress Cooldown (+3.5%, pick 18%), Frenzy (+3.5%, pick 9%), Tankbuster (+3.3%, pick 23%), Greater Expansion (+3.1%, pick 13%)
+  top pick : Radiant Regeneration (-1.1%, pick 96%), Mystic Regeneration (-0.1%, pick 94%), Extra Regen (-0.4%, pick 88%), Healing Booster (-1.6%, pick 80%), Spirit Resilience (+0.1%, pick 76%), Kinetic Dash (-2.5%, pick 69%)
 Abrams [pro 6917 / high 19029 games]
   top value: Berserker (+2.4%, pick 26%), Superior Duration (+2.1%, pick 65%), Grit (+1.6%, pick 8%), Colossus (+1.6%, pick 12%), Slowing Bullets (+1.4%, pick 5%), Duration Extender (+1.3%, pick 40%)
   top pick : Melee Charge (-0.1%, pick 93%), Close Quarters (-0.7%, pick 89%), Hunter's Aura (+0.0%, pick 79%), Stalker (+0.2%, pick 79%), Bullet Resist Shredder (+0.1%, pick 75%), Melee Lifesteal (-0.2%, pick 75%)
+Wraith [pro 12969 / high 33062 games]
+  top value: Spiritual Overflow (+2.7%, pick 32%), Spirit Rend (+2.5%, pick 16%), Fortitude (+2.5%, pick 13%), Spirit Lifesteal (+1.9%, pick 44%), Spirit Shredder Bullets (+1.7%, pick 24%), Sprint Boots (+1.6%, pick 25%)
+  top pick : Quicksilver Reload (-0.7%, pick 100%), Monster Rounds (-0.0%, pick 93%), Rapid Rounds (-0.2%, pick 88%), Extra Spirit (+0.4%, pick 86%), Surge of Power (-0.4%, pick 83%), Dispel Magic (+1.3%, pick 82%)
+McGinnis [pro 2930 / high 7406 games]
+  top value: Trophy Collector (+3.6%, pick 11%), Boundless Spirit (+3.6%, pick 19%), Spirit Burn (+2.9%, pick 16%), Mercurial Magnum (+2.4%, pick 20%), Greater Expansion (+2.3%, pick 42%), Diviner's Kevlar (+2.2%, pick 3%)
+  top pick : Mystic Vulnerability (+0.9%, pick 67%), Extra Charge (-0.1%, pick 66%), Intensifying Magazine (-1.6%, pick 65%), Mystic Expansion (+0.2%, pick 62%), Escalating Exposure (-1.6%, pick 58%), Monster Rounds (-1.2%, pick 57%)
+Paradox [pro 7735 / high 21069 games]
+  top value: Stamina Mastery (+1.9%, pick 41%), Lucky Shot (+1.6%, pick 0%), Superior Duration (+1.6%, pick 12%), Siphon Bullets (+1.6%, pick 2%), Divine Barrier (+1.5%, pick 5%), Ethereal Shift (+1.5%, pick 1%)
+  top pick : Sharpshooter (-1.1%, pick 84%), Long Range (-0.4%, pick 84%), Tankbuster (-0.6%, pick 82%), High-Velocity Rounds (+0.1%, pick 81%), Express Shot (-0.1%, pick 81%), Mystic Burst (+0.1%, pick 72%)
+Dynamo [pro 4423 / high 13430 games]
+  top value: Diviner's Kevlar (+3.7%, pick 6%), Bullet Resist Shredder (+2.9%, pick 9%), Witchmail (+2.5%, pick 2%), Phantom Strike (+2.4%, pick 2%), Healing Tempo (+2.4%, pick 3%), Rapid Rounds (+2.0%, pick 8%)
+  top pick : Mystic Expansion (-0.6%, pick 78%), Warp Stone (+0.5%, pick 72%), Duration Extender (-0.0%, pick 70%), Compress Cooldown (-0.3%, pick 66%), Extra Charge (-0.6%, pick 66%), Refresher (-1.1%, pick 61%)
+Kelvin [pro 4890 / high 13509 games]
+  top value: Superior Cooldown (+2.6%, pick 61%), Compress Cooldown (+2.6%, pick 48%), Infuser (+2.3%, pick 4%), Rescue Beam (+2.1%, pick 14%), Trophy Collector (+1.8%, pick 54%), Transcendent Cooldown (+1.8%, pick 15%)
+  top pick : Extra Charge (+0.3%, pick 80%), Improved Spirit (+0.3%, pick 79%), Extra Spirit (+0.9%, pick 73%), Extra Regen (-0.3%, pick 70%), Mystic Expansion (+1.0%, pick 68%), Rapid Recharge (+0.2%, pick 67%)
 Haze [pro 15746 / high 42866 games]
   top value: Lucky Shot (+3.2%, pick 28%), Rapid Recharge (+2.3%, pick 17%), Hollow Point (+2.1%, pick 13%), Frenzy (+2.0%, pick 1%), Recharging Rush (+1.9%, pick 24%), Silencer (+1.8%, pick 33%)
   top pick : Swift Striker (-1.1%, pick 97%), Rapid Rounds (-0.2%, pick 94%), Burst Fire (-0.1%, pick 87%), Active Reload (-0.9%, pick 82%), Extra Spirit (+0.1%, pick 81%), Extra Health (+0.2%, pick 71%)
+Holliday [pro 7053 / high 17323 games]
+  top value: Indomitable (+2.3%, pick 7%), Superior Cooldown (+2.1%, pick 39%), Spirit Snatch (+2.0%, pick 33%), Transcendent Cooldown (+2.0%, pick 12%), Melee Charge (+1.9%, pick 7%), High-Velocity Rounds (+1.9%, pick 21%)
+  top pick : Extra Charge (-0.7%, pick 100%), Rapid Recharge (-2.0%, pick 98%), Recharging Rush (+0.4%, pick 87%), Extra Stamina (-0.2%, pick 84%), Stamina Mastery (-0.6%, pick 80%), Tankbuster (+0.8%, pick 66%)
+Bebop [pro 10674 / high 30480 games]
+  top value: Witchmail (+3.4%, pick 10%), Lifestrike (+2.6%, pick 13%), Hunter's Aura (+2.6%, pick 22%), Melee Lifesteal (+2.6%, pick 19%), Mystic Reverb (+2.4%, pick 6%), Bullet Resist Shredder (+2.4%, pick 22%)
+  top pick : Spirit Strike (+0.7%, pick 89%), Spirit Snatch (+0.0%, pick 81%), Headshot Booster (-0.3%, pick 70%), Headhunter (-0.9%, pick 67%), Extra Regen (+0.7%, pick 65%), Slowing Hex (-1.0%, pick 64%)
+Calico [pro 6790 / high 18665 games]
+  top value: Melee Charge (+2.6%, pick 12%), Boundless Spirit (+2.3%, pick 44%), Hunter's Aura (+2.0%, pick 30%), Focus Lens (+2.0%, pick 10%), Mystic Vulnerability (+1.8%, pick 49%), Indomitable (+1.7%, pick 4%)
+  top pick : Stalker (-1.0%, pick 99%), Melee Lifesteal (-0.9%, pick 98%), Spirit Strike (+0.2%, pick 97%), Spirit Snatch (-0.2%, pick 96%), Cold Front (-1.2%, pick 95%), Arctic Blast (-3.0%, pick 87%)
+Grey Talon [pro 6041 / high 13585 games]
+  top value: Spirit Lifesteal (+2.4%, pick 2%), Mystic Reverb (+2.1%, pick 29%), Spiritual Overflow (+2.1%, pick 3%), Mystic Shot (+1.9%, pick 53%), Reactive Barrier (+1.7%, pick 25%), Hollow Point (+1.5%, pick 2%)
+  top pick : Mystic Burst (-0.3%, pick 95%), Extra Charge (-0.5%, pick 92%), Improved Spirit (+0.0%, pick 90%), Tankbuster (+0.1%, pick 89%), Rapid Recharge (+0.2%, pick 87%), Extra Spirit (-0.0%, pick 80%)
+Mo & Krill [pro 7602 / high 21228 games]
+  top value: Guardian Ward (+2.3%, pick 7%), Divine Barrier (+2.2%, pick 6%), Superior Cooldown (+2.1%, pick 53%), Diviner's Kevlar (+1.8%, pick 1%), Witchmail (+1.7%, pick 9%), Scourge (+1.4%, pick 29%)
+  top pick : Mystic Burst (+0.1%, pick 100%), Torment Pulse (-0.7%, pick 92%), Quicksilver Reload (-1.0%, pick 88%), Tankbuster (-0.1%, pick 75%), Cold Front (+0.5%, pick 73%), Sprint Boots (+0.5%, pick 70%)
+Shiv [pro 9061 / high 23569 games]
+  top value: Restorative Locket (+3.6%, pick 7%), Torment Pulse (+2.2%, pick 23%), Witchmail (+2.1%, pick 3%), High-Velocity Rounds (+1.7%, pick 42%), Enchanter's Emblem (+1.6%, pick 17%), Spirit Resilience (+1.5%, pick 45%)
+  top pick : Radiant Regeneration (-2.2%, pick 98%), Mystic Regeneration (+0.1%, pick 96%), Restorative Shot (-0.1%, pick 74%), Close Quarters (+0.2%, pick 69%), Dispel Magic (-0.4%, pick 66%), Hunter's Aura (+0.4%, pick 65%)
+Ivy [pro 7347 / high 19126 games]
+  top value: Healing Tempo (+3.0%, pick 25%), Heroic Aura (+2.7%, pick 7%), Golden Goose Egg (+2.6%, pick 12%), Superior Cooldown (+2.3%, pick 18%), Greater Expansion (+1.9%, pick 34%), Compress Cooldown (+1.7%, pick 18%)
+  top pick : Titanic Magazine (-0.7%, pick 81%), Extended Magazine (-0.2%, pick 79%), Tesla Bullets (-0.9%, pick 76%), Capacitor (-0.7%, pick 61%), Active Reload (+0.0%, pick 51%), Healing Booster (+1.6%, pick 50%)
+Warden [pro 988 / high 3310 games]
+  top value: Spirit Lifesteal (+3.5%, pick 49%), Spirit Resilience (+2.6%, pick 51%), Boundless Spirit (+2.3%, pick 18%), Blood Tribute (+2.3%, pick 9%), Enduring Speed (+2.1%, pick 74%), Sprint Boots (+2.1%, pick 56%)
+  top pick : High-Velocity Rounds (-0.5%, pick 90%), Quicksilver Reload (-0.4%, pick 89%), Opening Rounds (-1.1%, pick 88%), Mercurial Magnum (-1.9%, pick 81%), Titanic Magazine (-1.0%, pick 80%), Fleetfoot (+0.4%, pick 74%)
+Yamato [pro 10263 / high 23976 games]
+  top value: Express Shot (+3.1%, pick 43%), Berserker (+2.9%, pick 46%), Refresher (+2.1%, pick 22%), Compress Cooldown (+2.1%, pick 13%), Extra Health (+1.9%, pick 23%), Superior Cooldown (+1.7%, pick 20%)
+  top pick : Restorative Shot (-0.2%, pick 94%), Stalker (-0.5%, pick 89%), Melee Lifesteal (+0.1%, pick 89%), Radiant Regeneration (-1.6%, pick 79%), Healing Booster (+0.9%, pick 77%), Lifestrike (+0.3%, pick 76%)
+Lash [pro 10684 / high 31248 games]
+  top value: Mystic Reverb (+4.4%, pick 14%), Spirit Burn (+3.3%, pick 38%), Crippling Headshot (+2.5%, pick 2%), Enchanter's Emblem (+1.9%, pick 25%), Boundless Spirit (+1.6%, pick 48%), Grit (+1.3%, pick 12%)
+  top pick : Mystic Burst (-0.1%, pick 100%), Extra Charge (+0.7%, pick 95%), Tankbuster (-0.1%, pick 90%), Improved Spirit (-0.3%, pick 84%), Extra Spirit (-0.3%, pick 83%), Stamina Mastery (+0.9%, pick 80%)
+Viscous [pro 2836 / high 8115 games]
+  top value: Recharging Rush (+2.5%, pick 7%), Phantom Strike (+2.4%, pick 16%), Melee Charge (+2.3%, pick 23%), Lifestrike (+2.3%, pick 17%), Close Quarters (+1.9%, pick 11%), Healing Booster (+1.9%, pick 8%)
+  top pick : Mystic Burst (-1.1%, pick 90%), Tankbuster (-1.3%, pick 82%), Mystic Expansion (+1.2%, pick 78%), Spirit Snatch (+0.9%, pick 69%), High-Velocity Rounds (-0.5%, pick 69%), Spirit Strike (+1.0%, pick 65%)
+Pocket [pro 6204 / high 17473 games]
+  top value: Cheat Death (+5.1%, pick 8%), Mystic Shot (+3.0%, pick 18%), Ethereal Shift (+2.7%, pick 15%), Mystic Reverb (+1.7%, pick 1%), Spirit Lifesteal (+1.5%, pick 3%), Majestic Leap (+1.4%, pick 79%)
+  top pick : Mystic Burst (-0.3%, pick 98%), Tankbuster (+1.2%, pick 95%), Cultist Sacrifice (-3.0%, pick 89%), Monster Rounds (-1.0%, pick 88%), Spirit Burn (-0.8%, pick 84%), Superior Cooldown (-0.4%, pick 81%)
+Mirage [pro 2668 / high 7250 games]
+  top value: Diviner's Kevlar (+2.7%, pick 6%), Spirit Lifesteal (+2.0%, pick 13%), High-Velocity Rounds (+2.0%, pick 11%), Recharging Rush (+1.8%, pick 36%), Mystic Shot (+1.6%, pick 8%), Opening Rounds (+1.6%, pick 11%)
+  top pick : Toxic Bullets (+0.8%, pick 93%), Mystic Regeneration (+0.3%, pick 91%), Healbane (-1.2%, pick 90%), Mystic Vulnerability (+0.4%, pick 89%), Dispel Magic (-0.2%, pick 78%), Ricochet (-1.2%, pick 78%)
+Vyper [pro 4128 / high 9625 games]
+  top value: Spirit Lifesteal (+4.4%, pick 20%), Spiritual Overflow (+2.7%, pick 16%), Leech (+2.2%, pick 11%), Hollow Point (+2.1%, pick 4%), Tesla Bullets (+2.0%, pick 52%), Sprint Boots (+1.8%, pick 6%)
+  top pick : Burst Fire (+0.3%, pick 96%), Close Quarters (+0.3%, pick 95%), Rapid Rounds (+0.3%, pick 90%), Split Shot (-0.3%, pick 88%), Quicksilver Reload (-0.4%, pick 78%), Mercurial Magnum (-0.6%, pick 78%)
+Sinclair [pro 3705 / high 9522 games]
+  top value: Diviner's Kevlar (+3.7%, pick 32%), Divine Barrier (+2.9%, pick 14%), Extra Regen (+2.5%, pick 10%), Long Range (+2.2%, pick 13%), Enduring Speed (+2.2%, pick 10%), Mystic Reverb (+1.8%, pick 6%)
+  top pick : Mystic Expansion (+0.4%, pick 82%), Greater Expansion (+0.0%, pick 82%), Superior Duration (+0.3%, pick 74%), High-Velocity Rounds (-1.1%, pick 73%), Opening Rounds (-1.4%, pick 70%), Extra Charge (-0.9%, pick 61%)
+Mina [pro 9754 / high 25459 games]
+  top value: Ethereal Shift (+3.0%, pick 17%), Diviner's Kevlar (+2.8%, pick 7%), Extra Health (+2.4%, pick 53%), Spirit Lifesteal (+2.1%, pick 3%), Rapid Rounds (+2.1%, pick 28%), Restorative Locket (+1.8%, pick 3%)
+  top pick : Mystic Burst (-0.5%, pick 100%), Extra Spirit (-1.1%, pick 100%), Quicksilver Reload (-0.7%, pick 99%), Improved Spirit (-0.3%, pick 98%), Stamina Mastery (+0.2%, pick 97%), Tankbuster (+0.4%, pick 96%)
+Drifter [pro 10676 / high 28367 games]
+  top value: Superior Duration (+2.9%, pick 40%), Colossus (+2.5%, pick 10%), Superior Cooldown (+2.2%, pick 4%), Fleetfoot (+2.1%, pick 23%), Melee Charge (+1.9%, pick 49%), Hollow Point (+1.7%, pick 4%)
+  top pick : Stalker (-0.9%, pick 98%), Melee Lifesteal (+0.1%, pick 88%), Spirit Strike (-0.2%, pick 87%), Spirit Snatch (-1.2%, pick 87%), Hunter's Aura (+1.1%, pick 64%), Sprint Boots (+1.2%, pick 60%)
+Venator [pro 11106 / high 28299 games]
+  top value: Frenzy (+2.6%, pick 4%), Spellslinger (+2.2%, pick 6%), Weighted Shots (+2.1%, pick 54%), Silencer (+1.7%, pick 46%), Sprint Boots (+1.5%, pick 54%), Point Blank (+1.4%, pick 12%)
+  top pick : Restorative Shot (-0.4%, pick 90%), Battle Vest (-0.1%, pick 82%), Monster Rounds (-0.2%, pick 80%), Enduring Speed (+0.6%, pick 80%), Cultist Sacrifice (-3.5%, pick 76%), Fortitude (+0.7%, pick 75%)
+Victor [pro 5803 / high 15706 games]
+  top value: Mystic Reverb (+2.9%, pick 3%), Refresher (+2.8%, pick 16%), Compress Cooldown (+2.6%, pick 41%), Transcendent Cooldown (+2.5%, pick 20%), Extended Magazine (+2.4%, pick 8%), Witchmail (+2.0%, pick 3%)
+  top pick : Extra Regen (+0.0%, pick 95%), Enduring Speed (+0.1%, pick 93%), Spirit Lifesteal (+0.0%, pick 92%), Healing Booster (-0.7%, pick 90%), Mystic Vulnerability (+0.4%, pick 85%), Infuser (-1.6%, pick 81%)
+Paige [pro 8639 / high 23159 games]
+  top value: Superior Cooldown (+1.8%, pick 48%), Scourge (+1.7%, pick 1%), Transcendent Cooldown (+1.4%, pick 26%), Spellbreaker (+1.4%, pick 1%), Compress Cooldown (+1.2%, pick 39%), Divine Barrier (+1.1%, pick 54%)
+  top pick : High-Velocity Rounds (-0.2%, pick 96%), Mystic Expansion (+0.0%, pick 87%), Guardian Ward (+0.0%, pick 85%), Grit (+0.3%, pick 84%), Opening Rounds (-0.7%, pick 83%), Trophy Collector (+0.1%, pick 64%)
+The Doorman [pro 2850 / high 8574 games]
+  top value: Spirit Burn (+2.5%, pick 28%), Indomitable (+2.3%, pick 4%), Alchemical Fire (+2.0%, pick 7%), Improved Spirit (+1.8%, pick 64%), Extra Spirit (+1.6%, pick 50%), Superior Duration (+1.5%, pick 3%)
+  top pick : Mystic Expansion (+0.6%, pick 90%), Extra Charge (+0.1%, pick 89%), Mystic Burst (-0.1%, pick 88%), Rapid Recharge (-0.4%, pick 83%), Tankbuster (+0.2%, pick 76%), High-Velocity Rounds (-0.4%, pick 76%)
+Billy [pro 5003 / high 14005 games]
+  top value: Rapid Recharge (+4.1%, pick 52%), Berserker (+2.3%, pick 22%), Frenzy (+2.2%, pick 1%), Melee Charge (+2.1%, pick 49%), Colossus (+2.0%, pick 22%), Greater Expansion (+1.7%, pick 22%)
+  top pick : Melee Lifesteal (-0.1%, pick 94%), Close Quarters (+0.1%, pick 93%), Spirit Snatch (-0.1%, pick 93%), Stalker (-1.8%, pick 90%), Monster Rounds (+0.0%, pick 85%), Lifestrike (-0.7%, pick 75%)
+Graves [pro 4656 / high 14943 games]
+  top value: Escalating Exposure (+2.3%, pick 15%), Spiritual Overflow (+2.3%, pick 9%), Spirit Lifesteal (+1.7%, pick 26%), Diviner's Kevlar (+1.6%, pick 10%), Fortitude (+1.6%, pick 8%), Surge of Power (+1.5%, pick 16%)
+  top pick : Restorative Shot (-0.3%, pick 91%), Extra Stamina (+0.0%, pick 91%), Extra Spirit (+0.7%, pick 69%), Improved Spirit (+0.1%, pick 68%), Mystic Shot (+0.4%, pick 63%), Toxic Bullets (+0.3%, pick 62%)
+Apollo [pro 5283 / high 14585 games]
+  top value: Hunter's Aura (+2.9%, pick 23%), Witchmail (+2.3%, pick 5%), Mystic Reverb (+1.8%, pick 3%), Torment Pulse (+1.8%, pick 17%), Transcendent Cooldown (+1.7%, pick 7%), Enchanter's Emblem (+1.6%, pick 11%)
+  top pick : Extra Spirit (-0.8%, pick 89%), Improved Spirit (-0.9%, pick 89%), Mystic Burst (-0.0%, pick 88%), Mystic Expansion (-0.6%, pick 87%), Healing Booster (+0.0%, pick 84%), Extra Regen (+0.7%, pick 82%)
+Deadman Danny [pro 8260 / high 22812 games]
+  top value: Spirit Lifesteal (+2.4%, pick 14%), Spiritual Overflow (+2.2%, pick 9%), Warp Stone (+2.1%, pick 12%), Enchanter's Emblem (+1.8%, pick 26%), Compress Cooldown (+1.7%, pick 50%), Ethereal Shift (+1.6%, pick 3%)
+  top pick : High-Velocity Rounds (-0.3%, pick 97%), Improved Spirit (+0.0%, pick 90%), Extra Spirit (+0.5%, pick 86%), Mystic Burst (+1.0%, pick 82%), Mystic Expansion (+1.1%, pick 80%), Tankbuster (+0.5%, pick 78%)
+Rem [pro 4429 / high 12682 games]
+  top value: Cheat Death (+3.5%, pick 8%), Echo Shard (+2.9%, pick 28%), Heroic Aura (+2.2%, pick 20%), Extra Spirit (+1.9%, pick 64%), Superior Cooldown (+1.5%, pick 44%), Greater Expansion (+1.4%, pick 27%)
+  top pick : Extra Charge (+0.1%, pick 91%), Healing Booster (-0.2%, pick 90%), Guardian Ward (+0.7%, pick 83%), Grit (+0.1%, pick 79%), Extra Regen (-0.1%, pick 70%), Improved Spirit (+0.9%, pick 65%)
+Silver [pro 4071 / high 12138 games]
+  top value: Duration Extender (+3.1%, pick 19%), Diviner's Kevlar (+2.9%, pick 14%), Berserker (+2.0%, pick 49%), Express Shot (+2.0%, pick 10%), Frenzy (+1.7%, pick 16%), Inhibitor (+1.6%, pick 7%)
+  top pick : Melee Lifesteal (+0.1%, pick 95%), Stalker (-0.5%, pick 94%), Hunter's Aura (-0.6%, pick 87%), Restorative Shot (+0.0%, pick 87%), Lifestrike (-0.5%, pick 65%), Close Quarters (+0.3%, pick 64%)
+Celeste [pro 6260 / high 15101 games]
+  top value: Superior Cooldown (+3.7%, pick 28%), Transcendent Cooldown (+2.4%, pick 6%), Blood Tribute (+2.0%, pick 3%), Ethereal Shift (+2.0%, pick 11%), Spirit Strike (+1.8%, pick 9%), Compress Cooldown (+1.7%, pick 14%)
+  top pick : Radiant Regeneration (-3.6%, pick 100%), Extra Regen (+0.3%, pick 98%), Healing Booster (-0.0%, pick 98%), High-Velocity Rounds (-0.0%, pick 97%), Mystic Regeneration (+0.0%, pick 97%), Torment Pulse (+1.0%, pick 92%)
+Rat King [pro 19275 / high 52858 games]
+  top value: Diviner's Kevlar (+5.0%, pick 6%), Hunter's Aura (+4.0%, pick 7%), Superior Duration (+3.4%, pick 10%), Heroic Aura (+3.1%, pick 18%), Duration Extender (+3.0%, pick 11%), Arcane Surge (+2.8%, pick 10%)
+  top pick : Extra Health (+0.3%, pick 93%), Fortitude (-0.6%, pick 93%), Monster Rounds (-0.3%, pick 88%), High-Velocity Rounds (-0.1%, pick 87%), Enduring Speed (+0.1%, pick 86%), Sprint Boots (+0.5%, pick 72%)
+Solomon [pro 7521 / high 20830 games]
+  top value: Magic Carpet (+2.6%, pick 6%), Cheat Death (+2.1%, pick 1%), Diviner's Kevlar (+1.9%, pick 2%), Close Quarters (+1.9%, pick 6%), Monster Rounds (+1.3%, pick 19%), Divine Barrier (+1.3%, pick 22%)
+  top pick : Mystic Expansion (+0.7%, pick 88%), Extra Spirit (-0.3%, pick 87%), High-Velocity Rounds (-0.4%, pick 86%), Superior Cooldown (+0.8%, pick 84%), Opening Rounds (-0.8%, pick 84%), Improved Spirit (+0.7%, pick 82%)
+Nurse Harrow [pro 3029 / high 7825 games]
+  top value: Ricochet (+2.7%, pick 39%), Weapon Shielding (+2.0%, pick 5%), High-Velocity Rounds (+1.8%, pick 4%), Opening Rounds (+1.4%, pick 5%), Recharging Rush (+1.3%, pick 20%), Extra Health (+1.2%, pick 40%)
+  top pick : Healing Booster (+0.5%, pick 98%), Extra Regen (-0.3%, pick 98%), Titanic Magazine (-1.0%, pick 96%), Extended Magazine (-0.5%, pick 89%), Kinetic Dash (-0.6%, pick 77%), Extra Stamina (+0.2%, pick 71%)
