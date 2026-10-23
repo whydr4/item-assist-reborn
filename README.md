@@ -36,11 +36,13 @@ cd pipeline
 python collect.py          # ~45 мин, кэшируется в data/cache, можно прерывать
 python build.py            # -> data/recommender_data.js + data/build_report.txt
 python make_layout.py      # -> mod_src/panorama/layout/hud_health.xml из текущей игры
+python pack.py --pak 30    # компиляция + dist/pak30_dir.vpk (--install кладёт в addons)
 ```
 
 Нужны: Python 3.11+, установленная Deadlock,
 [Source2Viewer CLI](https://github.com/ValveResourceFormat/ValveResourceFormat/releases) для
-декомпиляции layout.
+декомпиляции layout, CS2 с бесплатным DLC **Counter-Strike 2 Workshop Tools** (его
+`resourcecompiler.exe` компилирует Panorama-ресурсы, которые понимает Deadlock).
 
 ## Установка
 
