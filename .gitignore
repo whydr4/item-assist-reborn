@@ -8,3 +8,4 @@ dist/
 data/matches/
 data/fetch_matches.log
 data/sim_run.log
+data/logs/

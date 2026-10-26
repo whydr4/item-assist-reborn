@@ -275,15 +275,42 @@
         _imbueLogKey = key;
         if (o.shown || o.result !== "hidden") ilog("imbue", o);
     }
+    // The game makes a new popup for each purchase, and the first one found stays valid but hidden: a
+    // cached label went stale after the first popup (2026-10-26 log: later imbue buys were never seen).
+    // So the popup manager is found once (climbing from the first label) and searched every tick for the
+    // popup that is shown now — a small subtree; the full HUD is only searched until the manager is known.
+    var _popupMgr = null;
+    function popupRootOf(p) {             // the popup = the ancestor whose parent is the popup manager
+        for (var u = 0; u < 14 && p && p.GetParent; u++) { var par = p.GetParent(); if (par === _popupMgr) return p; p = par; }
+        return null;
+    }
+    function shownImbueLabel() {
+        var out = [];
+        (function walk(p, d) {
+            if (!p || d > 14) return;
+            try { if (p.id === "modNameToPurchase") { out.push(p); return; } } catch (e) {}
+            var k = (p.Children ? p.Children() : []) || [];
+            for (var i = 0; i < k.length; i++) walk(k[i], d + 1);
+        })(_popupMgr, 0);
+        for (var j = 0; j < out.length; j++) { var pr = popupRootOf(out[j]); if (pr && _vis(pr) && !hasCls(pr, "Hidden")) return out[j]; }
+        return out.length ? out[0] : null;
+    }
     function imbueHint(root, open) {
         if (!root || !root.FindChildTraverse) return;
-        if (!valid(_imbuePanel) && _hb >= _imbueSearchAt) {
-            _imbuePanel = root.FindChildTraverse("modNameToPurchase"); _imbueSearchAt = _hb + (open ? 1 : 3);
-            if (_imbuePanel) ilog("imbue_panel", { found: true, shopOpen: !!open });
+        if (!valid(_popupMgr)) {
+            if (_hb < _imbueSearchAt) return;
+            _imbueSearchAt = _hb + (open ? 1 : 3);
+            var first = root.FindChildTraverse("modNameToPurchase");
+            for (var m = first; m && m.GetParent; m = m.GetParent()) {
+                var mt = ""; try { mt = m.paneltype + "#" + m.id; } catch (e) {}
+                if (mt.indexOf("PopupManager") !== -1) { _popupMgr = m; break; }
+            }
+            if (!_popupMgr) return;
+            ilog("imbue_panel", { found: true, shopOpen: !!open, mgr: _popupMgr.paneltype + "#" + _popupMgr.id });
         }
+        _imbuePanel = shownImbueLabel();
         if (!valid(_imbuePanel)) return;
-        var popup = _imbuePanel;
-        for (var u = 0; u < 8 && popup && popup.paneltype !== "PopupActivatedAbilitiesSelection" && popup.GetParent; u++) popup = popup.GetParent();
+        var popup = popupRootOf(_imbuePanel);
         var shown = popup && !hasCls(popup, "Hidden") && _vis(popup);
         var menu = popup && popup.FindChildTraverse ? popup.FindChildTraverse("SignatureSlotMenu") : null;
         var text = "";
@@ -296,7 +323,11 @@
         _imbueSig = sig;
         var diag = { shown: shown ? 1 : 0, shopOpen: open ? 1 : 0, text: text.substr(0, 40), item: id ? Number(id) : null, hero: _heroId,
                      slot: slot, popupType: popup ? popup.paneltype : null, menu: menu ? 1 : 0, kids: 0, result: "" };
-        if (!menu) { diag.result = shown ? "no SignatureSlotMenu" : "hidden"; imbueLog(diag); return; }
+        if (!menu) {
+            diag.result = shown ? "no SignatureSlotMenu (retrying)" : "hidden";
+            if (shown) _imbueSig = "";        // the popup may not have built its menu yet: look again next tick
+            imbueLog(diag); return;
+        }
         // AbilitySlotMenu (shop_ability_slot_menu.xml) keeps the 4 icons inside #abilitiesContainer
         var slots = (menu.FindChildTraverse && menu.FindChildTraverse("abilitiesContainer")) || menu;
         var kids = slots.Children ? (slots.Children() || []) : [];
@@ -336,7 +367,7 @@
     // DATA.abilityOrder[hero] (strong players' most common order) that the current levels don't cover.
     // hud.xml: #AbilitiesContainer > CitadelHudAbilities#hud_signature (slots signature_1..4) builds one
     // CitadelAbilityIcon per slot at runtime (seen in-game, client 6819).
-    var _abilityBtns = null, _skillSig = "", _skillDiag = "-", _abilitySearchAt = 0, _logLv = null, _logHint = 0;
+    var _abilityBtns = null, _skillSig = "", _skillDiag = "-", _abilitySearchAt = 0, _logLv = null, _logHint = 0, _lvMax = [0, 0, 0, 0];
     function abilityButtons(root) {
         if (_abilityBtns && _abilityBtns.length && valid(_abilityBtns[0])) return _abilityBtns;
         if (_hb < _abilitySearchAt || !root || !root.FindChildTraverse) return null;
@@ -384,7 +415,9 @@
         if (!order) _skillDiag = "no order for hero";
         if (!order || !btns) return;
         var lv = [0, 0, 0, 0], plan = [0, 0, 0, 0], next = 0;
-        for (var i = 0; i < 4; i++) lv[i] = abilityLevel(btns[i]);
+        // Levels only go up within a match, but the icon's Tier classes blink off for a moment (the log
+        // showed A2 "levelling up" to the same level 9 times): use the highest level seen this match.
+        for (var i = 0; i < 4; i++) { _lvMax[i] = Math.max(_lvMax[i], abilityLevel(btns[i])); lv[i] = _lvMax[i]; }
         for (var k = 0; k < order.length; k++) {
             var sl = order[k] - 1; if (sl < 0 || sl > 3) continue;
             plan[sl]++;
@@ -1400,7 +1433,11 @@
         if (!why) return;
         markStaleCards();
         _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};
-        _logOwned = {}; _logRecSig = ""; _advice = []; _logLv = null;
+        _logOwned = {}; _logRecSig = ""; _advice = []; _logLv = null; _lvMax = [0, 0, 0, 0];
+        // The map change can leave the previous map's panels valid but dead (the hideout shop stayed
+        // valid and never opened again): drop every cached handle so this match's panels are found.
+        _shopCands = []; _shopSeenOpen = false; _imbuePanel = null; _popupMgr = null; _abilityBtns = null;
+        _recentContCache = null; _goldLabelCache = null; _toastMgr = null;
         ilog("match", { why: why, matchId: mid, hero: _heroId });
         // The purchase feed still lists the last map's buys (it is only read with the shop open, so some
         // were never seen) and old toasts may still be up: mark both as handled, or they would come back
@@ -1876,14 +1913,35 @@
     // CitadelModIcon's ModIconImage src is native-set and not exposed to JS (verified in-game:
     // "no readable src" for all icons). Local owned items come from the shop mod_view name-scan
     // (getOwnedNames), which works. Enemy items have no readable source and stay unavailable.
-    var _shopCache = null;
+    // The shop panel persists whether open or closed (open is just the gShopOpen class), so its handle
+    // is cached — re-traversing the whole HUD every tick was the main per-second cost. But the HUD and
+    // this script survive map changes and a match brings its own shop panel while the hideout one stays
+    // valid: caching the first one found kept us looking at a shop that never opens (the 2026-10-26 log:
+    // no "shop open" for a whole match). So every shop panel found is kept, the open one wins, and the
+    // set is rebuilt on a new match and every 15 s until a shop of this match has been seen open.
+    var _shopCache = null, _shopCands = [], _shopScanAt = 0, _shopSeenOpen = false;
+    function findAllShops(p, d, out) {
+        if (!p || d > 40) return out;
+        try { if (p.paneltype === "CitadelHudHeroShop" || p.id === "CitadelHudHeroShop") { out.push(p); return out; } } catch (e) {}
+        var kids = (p.Children ? p.Children() : []) || [];
+        for (var i = 0; i < kids.length; i++) findAllShops(kids[i], d + 1, out);
+        return out;
+    }
+    function openShop() {                 // cheap: class checks on the cached candidates only
+        for (var i = 0; i < _shopCands.length; i++) if (valid(_shopCands[i]) && hasCls(_shopCands[i], "gShopOpen")) return _shopCands[i];
+        return null;
+    }
     function shopIfOpen(root) {
-        // Cache the shop panel handle: it persists in the tree whether open or closed (open is just the
-        // gShopOpen class). Re-traversing the whole HUD every tick to find it is the main per-second cost.
-        var shop = valid(_shopCache) ? _shopCache
-            : (root && (root.FindChildTraverse("CitadelHudHeroShop") || findByAny(root, "CitadelHudHeroShop", 0)));
-        _shopCache = valid(shop) ? shop : null;
-        return (shop && shop.BHasClass && shop.BHasClass("gShopOpen")) ? shop : null;
+        // rescan: every 3 s while none is known (menus, loading), every 15 s until one has been seen open
+        if (root && _hb >= _shopScanAt && (!_shopCands.length || !_shopSeenOpen)) {
+            var had = _shopCands.length;
+            _shopCands = findAllShops(root, 0, []); _shopScanAt = _hb + (_shopCands.length ? 15 : 3);
+            if (_shopCands.length !== had) ilog("shop_scan", { found: _shopCands.length });
+        }
+        var shop = openShop();
+        if (shop) { _shopCache = shop; _shopSeenOpen = true; return shop; }
+        if (!valid(_shopCache)) _shopCache = _shopCands.length ? _shopCands[_shopCands.length - 1] : null;
+        return null;
     }
     // Street Brawl detection. AUTHORITATIVE signal = the HUD carries a "gamemode_streetbrawl"
     // class in brawl (the game's own top_bar/shop CSS gates everything off it). Corroborated by
@@ -1935,7 +1993,7 @@
                 _heroHist.push(((DATA.heroes && DATA.heroes[String(h)]) || h) + (top ? "(bar)" : "(shop)"));
                 if (_heroId) markStaleCards(); else _staleCards = [];   // a real switch: the old hero's cards are stale
                 _heroId = h; _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownLog = []; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
-                _logOwned = {}; _logRecSig = ""; _advice = [];
+                _logOwned = {}; _logRecSig = ""; _advice = []; _lvMax = [0, 0, 0, 0]; _logLv = null;
                 ilog("hero", { hero: h, name: DATA.heroes && DATA.heroes[String(h)], src: top ? "topbar" : "shop", band: bandId(), rank: [_rankTier, _rankSub] });
                 _enemyItems = {}; _rpSeen = {}; _rpEnemySig = "";   // reset accumulated enemy purchases
                 if (valid(_float)) refreshFloat(root, shop);
@@ -1989,7 +2047,18 @@
                 refreshFloat(root, shop);
             }
             if (_hb >= _coachForceUntil) hideCoach();   // shop-closed only, EXCEPT a brief preview when you (re)enable the coach
-        } else { _shopWasOpen = false; coachCheck(root); if (_helpShown) closeHelp(); }   // tips close with the shop
+        } else {
+            _shopWasOpen = false; coachCheck(root); if (_helpShown) closeHelp();   // tips close with the shop
+            // Buys also happen from the Quick Buy queue with the shop closed: keep a fresh copy of the advice
+            // every 5 s so the log can tell where a purchase stood (the panel itself only refreshes open).
+            if (CFG.log && _heroId && _hb % 5 === 0) {
+                var adv = computeRecs(_heroId, getSouls(root), _ownedAccum, _enemies, _logT), sigA = [];
+                for (var ai = 0; ai < adv.length && ai < 8; ai++) sigA.push(adv[ai].id);
+                var asig = "closed|" + sigA.join(",");
+                if (asig !== _logRecSig) { _logRecSig = asig; logRecs(adv, getSouls(root), _logT, _ownedAccum); }
+                else { _advice = []; for (var aj = 0; aj < adv.length; aj++) _advice.push(adv[aj].id); }
+            }
+        }
         watchMatch(root);
         watchOwn(root, shop);
         logOwned();
@@ -2008,15 +2077,15 @@
 
     // Fast loop (0.1 s): only cheap class checks on cached panels — hides the root-level panel the moment
     // the shop closes (Esc) instead of on the next 1 s tick, and reacts to the imbue popup.
-    var _floatShown = null;
+    var _floatShown = null, _fastN = 0;
     function fastLoop() {
         guard("fastLoop", function () {
-            var open = !_brawlOn && valid(_shopCache) && hasCls(_shopCache, "gShopOpen");
+            var open = !_brawlOn && !!openShop();
             if (valid(_float) && open !== _floatShown) { _floatShown = open; css(_float, { visibility: open ? "visible" : "collapse" }); }
             // The imbue popup also opens for items bought from the Quick Buy queue with the shop closed, and
             // it stays up after Esc closes the shop: check it either way (the popup lookup is cached; with
             // the shop closed a missing popup is searched for every 3 s instead of every second).
-            if (!_brawlOn) imbueHint(hudRoot(), open);
+            if (!_brawlOn && (++_fastN % 2 === 0)) imbueHint(hudRoot(), open);   // 0.2 s is quick enough
         });
         $.Schedule(0.1, fastLoop);
     }
