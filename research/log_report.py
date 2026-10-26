@@ -55,7 +55,7 @@ def split_matches(events):
         if e["ev"] in ("match", "hero") and cur["events"] and any(x["ev"] in ("recs", "buy") for x in cur["events"]):
             matches.append(cur)
             cur = {"events": [], "hero": cur["hero"]}
-        if e["ev"] == "hero":
+        if e["ev"] in ("hero", "match") and e.get("hero"):
             cur["hero"] = e.get("hero")
         cur["events"].append(e)
     if cur["events"]:
