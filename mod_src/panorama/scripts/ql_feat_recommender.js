@@ -258,7 +258,10 @@
         var out = [], cls = ["PlayerHeroHidden", "HeroName"];
         for (var c = 0; c < cls.length; c++) {
             var labels = (t.FindChildrenWithClassTraverse ? t.FindChildrenWithClassTraverse(cls[c]) : []) || [];
-            for (var i = 0; i < labels.length; i++) { var id = resolveHeroToken(labels[i].text); if (id) out.push(id); }
+            for (var i = 0; i < labels.length; i++) {
+                var id = resolveHeroToken(labels[i].text);
+                if (id) { if (!out.length) { try { _heroLabel = String(labels[i].text || "").substr(0, 40); } catch (e) {} } out.push(id); }
+            }
             if (out.length) return out;
         }
         return out;
@@ -464,6 +467,7 @@
         return out;
     }
     function hasCls(p, c) { try { return !!(p && p.BHasClass && p.BHasClass(c)); } catch (e) { return false; } }
+    var _heroLabel = "";                  // the top-bar text the hero was read from (logged with the hero)
     function localHeroTopBar(root) {
         var ps = topBarPlayers(root);
         for (var i = 0; i < ps.length; i++) if (hasCls(ps[i], "LocalPlayer")) { var h = heroesInPanel(ps[i]); if (h.length) return h[0]; }
@@ -1437,7 +1441,10 @@
         // The map change can leave the previous map's panels valid but dead (the hideout shop stayed
         // valid and never opened again): drop every cached handle so this match's panels are found.
         _shopCands = []; _shopSeenOpen = false; _imbuePanel = null; _popupMgr = null; _abilityBtns = null;
-        _recentContCache = null; _goldLabelCache = null; _toastMgr = null;
+        _recentContCache = null; _goldLabelCache = null; _toastMgr = null; _topPlayers = null;
+        // the hero is picked again for the match: keeping the hideout hero gave Rem's advice and imbue
+        // slots to a Deadman Danny for a whole evening (2026-10-26)
+        _heroId = null; _heroCand = null; _heroCandN = 0; _enemies = []; _enemySig = ""; _laneEnemies = [];
         ilog("match", { why: why, matchId: mid, hero: _heroId });
         // The purchase feed still lists the last map's buys (it is only read with the shop open, so some
         // were never seen) and old toasts may still be up: mark both as handled, or they would come back
@@ -1980,6 +1987,17 @@
     // other heroes (ally pings, notes in someone's build), and every switch resets the owned list —
     // which brought already-bought items back into the recommendations.
     var HERO_CONFIRM = 3, _heroCand = null, _heroCandN = 0, _heroSwitches = 0, _heroHist = [], _laneEnemies = [];
+    function setHero(h, src, root, shop) {
+        _heroSwitches++; _heroCand = null; _heroCandN = 0;
+        if (_heroHist.length >= 4) _heroHist.shift();
+        _heroHist.push(((DATA.heroes && DATA.heroes[String(h)]) || h) + "(" + src + ")");
+        if (_heroId) markStaleCards(); else _staleCards = [];   // a real switch: the old hero's cards are stale
+        _heroId = h; _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownLog = []; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
+        _logOwned = {}; _logRecSig = ""; _advice = []; _lvMax = [0, 0, 0, 0]; _logLv = null; _skillSig = "";
+        ilog("hero", { hero: h, name: DATA.heroes && DATA.heroes[String(h)], src: src, label: _heroLabel, band: bandId(), rank: [_rankTier, _rankSub] });
+        _enemyItems = {}; _rpSeen = {}; _rpEnemySig = "";   // reset accumulated enemy purchases
+        if (shop && valid(_float)) refreshFloat(root, shop);
+    }
     function scanPlayers(root, shop) {
         if (shop) {
             var top = localHeroTopBar(root), h = top || getLocalHeroId(shop);
@@ -1987,17 +2005,7 @@
                 if (h === _heroCand) _heroCandN++; else { _heroCand = h; _heroCandN = 1; }
                 if (_heroCandN < HERO_CONFIRM) h = null;
             } else { _heroCand = null; _heroCandN = 0; }
-            if (h && h !== _heroId) {
-                _heroSwitches++; _heroCand = null; _heroCandN = 0;
-                if (_heroHist.length >= 4) _heroHist.shift();
-                _heroHist.push(((DATA.heroes && DATA.heroes[String(h)]) || h) + (top ? "(bar)" : "(shop)"));
-                if (_heroId) markStaleCards(); else _staleCards = [];   // a real switch: the old hero's cards are stale
-                _heroId = h; _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownLog = []; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
-                _logOwned = {}; _logRecSig = ""; _advice = []; _lvMax = [0, 0, 0, 0]; _logLv = null;
-                ilog("hero", { hero: h, name: DATA.heroes && DATA.heroes[String(h)], src: top ? "topbar" : "shop", band: bandId(), rank: [_rankTier, _rankSub] });
-                _enemyItems = {}; _rpSeen = {}; _rpEnemySig = "";   // reset accumulated enemy purchases
-                if (valid(_float)) refreshFloat(root, shop);
-            }
+            if (h && h !== _heroId) setHero(h, top ? "topbar" : "shop", root, shop);
         }
         detectRank(root);
         if (_heroId) {
@@ -2060,6 +2068,13 @@
             }
         }
         watchMatch(root);
+        // The local hero from the top bar, also with the shop closed (the shop path alone left the hideout
+        // hero in place for whole matches). The top bar marks the local player itself, so no confirmation.
+        if (_hb % 3 === 0) {
+            if (_topPlayers && _topPlayers.length && !valid(_topPlayers[0])) _topPlayers = null;
+            var th = localHeroTopBar(root);
+            if (th && th !== _heroId) setHero(th, "topbar", root, shop);
+        }
         watchOwn(root, shop);
         logOwned();
         if (CFG.qsync && _hb % 2 === 0) queueSync(root, shop);   // also with the shop closed: the game buys the queue front
