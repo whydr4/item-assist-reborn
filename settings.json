@@ -1,7 +1,8 @@
 {
-  "_comment": "Your lasting choices for the in-game panel. Deadlock's interface can't save settings, so they are baked into the mod when you run pipeline/pack.py; switches changed in the game last until it closes. rank: null = auto from your rank badge, or \"low\" (1-3), \"mid\" (4-6), \"high\" (7-8), \"pro\" (9+). qsync = Auto-queue (our 6 picks become the game's Quick Buy queue).",
+  "_comment": "Your lasting choices for the in-game panel. Deadlock's interface can't save settings, so they are baked into the mod when you run pipeline/pack.py; switches changed in the game last until it closes. rank: null = auto from your rank badge, or \"low\" (1-3), \"mid\" (4-6), \"high\" (7-8), \"pro\" (9+). qsync = Auto-queue (our 6 picks become the game's Quick Buy queue). log = write [IAR] lines to the game console (start Deadlock with -condebug, then python research/log_report.py).",
   "rank": null,
   "qsync": false,
   "badges": true,
-  "skillHint": true
+  "skillHint": true,
+  "log": true
 }

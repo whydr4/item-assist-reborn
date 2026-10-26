@@ -113,15 +113,33 @@
     // does not exist in client 6819 — checked in the DLLs), so in-game switches last until the game
     // closes; the player's lasting choices come from settings.json, baked in by pipeline/pack.py as
     // QOL_REC_DATA.userDefaults.
-    var CFG = { count: 8, refreshSec: 3, opacity: 100, side: "left", mode: "blend", rank: null, showPct: false, min: false, holding: false, holdCount: 3, coach: false, gubami: false, skills: false, buy: true, counters: true, tips: false, badges: true, qsync: false, skillHint: true, cfgV: 2 };
+    var CFG = { count: 8, refreshSec: 3, opacity: 100, side: "left", mode: "blend", rank: null, showPct: false, min: false, holding: false, holdCount: 3, coach: false, gubami: false, skills: false, buy: true, counters: true, tips: false, badges: true, qsync: false, skillHint: true, log: true, cfgV: 2 };
     var GUBAMI_ICON = "s2r://panorama/images/gubami/gubami_coach.vtex";   // bundled custom portrait (mod asset)
     function loadCfg() {
         // Only the choices still offered in the settings are taken; everything else is fixed to the
         // values the research and in-game tests settled on (blend sort, 8 items, no extra columns).
-        var USER_KEYS = { rank: 1, qsync: 1, badges: 1, min: 1, skillHint: 1 }, o = DATA.userDefaults || {};
+        var USER_KEYS = { rank: 1, qsync: 1, badges: 1, min: 1, skillHint: 1, log: 1 }, o = DATA.userDefaults || {};
         for (var k in o) if (o.hasOwnProperty(k) && USER_KEYS[k] && CFG.hasOwnProperty(k)) CFG[k] = o[k];
     }
     loadCfg();
+
+    // ---- LOG ------------------------------------------------------------------
+    // One "[IAR] {json}" console line per event: what the panel advised and why (score parts), what was
+    // bought or sold and where it stood in the advice, skill hints vs. actual level-ups, imbue popup
+    // diagnostics, script errors. Panorama can't write files: run Deadlock with -condebug and
+    // research/log_report.py turns game/citadel/console.log into a per-match report.
+    var _logT = 0;                         // game clock (s) at the last tick, stamped on every line
+    function ilog(ev, o) {
+        if (!CFG.log) return;
+        o = o || {};
+        o.ev = ev; o.t = _logT; o.hb = _hb;
+        try { $.Msg("[IAR] " + JSON.stringify(o)); } catch (e) {}
+    }
+    function guard(where, fn) {           // a throw inside a $.Schedule loop would stop that loop for good
+        try { fn(); } catch (e) { ilog("error", { where: where, msg: String(e && e.message || e), stack: String(e && e.stack || "").substr(0, 300) }); }
+    }
+    ilog("start", { client: DATA.meta && DATA.meta.client_version, data: DATA.meta && DATA.meta.generated,
+                    since: DATA.meta && DATA.meta.since, cfg: { mode: CFG.mode, rank: CFG.rank, qsync: CFG.qsync, skillHint: CFG.skillHint } });
 
     function phaseIndex(tSec) { return tSec < 600 ? 0 : (tSec < 1500 ? 1 : 2); }
     // Item-flow phases baked by pipeline/build.py (0-9 / 9-20 / 20-30 / 30+ min): recp[hero][phase] =
@@ -250,29 +268,47 @@
     // (popups/popup_activated_ability_selection.xml): #modNameToPurchase is the item, #SignatureSlotMenu
     // holds the 4 ability buttons in slot order. DATA.imbue[hero][item] = the slot strong players pick
     // (pipeline/build.py from Phantom+ matches, imbueStats has the share), framed in the popup.
-    var _imbuePanel = null, _imbueSearchAt = 0, _imbueSig = "";
-    function imbueHint(root) {
+    var _imbuePanel = null, _imbueSearchAt = 0, _imbueSig = "", _imbueLogKey = "";
+    function imbueLog(o) {                 // once per popup state + outcome (the not-laid-out retry runs every 0.1 s)
+        var key = o.shown + "|" + o.item + "|" + o.slot + "|" + o.result;
+        if (key === _imbueLogKey) return;
+        _imbueLogKey = key;
+        if (o.shown || o.result !== "hidden") ilog("imbue", o);
+    }
+    function imbueHint(root, open) {
         if (!root || !root.FindChildTraverse) return;
-        if (!valid(_imbuePanel) && _hb >= _imbueSearchAt) { _imbuePanel = root.FindChildTraverse("modNameToPurchase"); _imbueSearchAt = _hb + 1; }
+        if (!valid(_imbuePanel) && _hb >= _imbueSearchAt) {
+            _imbuePanel = root.FindChildTraverse("modNameToPurchase"); _imbueSearchAt = _hb + (open ? 1 : 3);
+            if (_imbuePanel) ilog("imbue_panel", { found: true, shopOpen: !!open });
+        }
         if (!valid(_imbuePanel)) return;
         var popup = _imbuePanel;
         for (var u = 0; u < 8 && popup && popup.paneltype !== "PopupActivatedAbilitiesSelection" && popup.GetParent; u++) popup = popup.GetParent();
         var shown = popup && !hasCls(popup, "Hidden") && _vis(popup);
         var menu = popup && popup.FindChildTraverse ? popup.FindChildTraverse("SignatureSlotMenu") : null;
-        var id = shown ? nameToId(_imbuePanel.text) : null;
-        var slot = id && _heroId && DATA.imbue && DATA.imbue[String(_heroId)] ? DATA.imbue[String(_heroId)][id] : 0;
+        var text = "";
+        try { text = shown ? String(_imbuePanel.text || "") : ""; } catch (e) {}
+        var id = shown ? nameToId(text) : null;
+        var heroTab = _heroId && DATA.imbue ? DATA.imbue[String(_heroId)] : null;
+        var slot = id && heroTab ? (heroTab[id] || 0) : 0;
         var sig = (shown ? 1 : 0) + "|" + id + "|" + slot;
         if (sig === _imbueSig) return;
         _imbueSig = sig;
-        if (!menu) return;
+        var diag = { shown: shown ? 1 : 0, shopOpen: open ? 1 : 0, text: text.substr(0, 40), item: id ? Number(id) : null, hero: _heroId,
+                     slot: slot, popupType: popup ? popup.paneltype : null, menu: menu ? 1 : 0, kids: 0, result: "" };
+        if (!menu) { diag.result = shown ? "no SignatureSlotMenu" : "hidden"; imbueLog(diag); return; }
         // AbilitySlotMenu (shop_ability_slot_menu.xml) keeps the 4 icons inside #abilitiesContainer
         var slots = (menu.FindChildTraverse && menu.FindChildTraverse("abilitiesContainer")) || menu;
         var kids = slots.Children ? (slots.Children() || []) : [];
+        diag.kids = kids.length;
         for (var i = 0; i < kids.length; i++) { var old = kids[i].FindChildTraverse ? kids[i].FindChildTraverse("IARImbueStar") : null; if (old) old.DeleteAsync(0); }
         var head = popup.FindChildTraverse ? popup.FindChildTraverse("HeaderContainer") : null;
         var oldLine = head && head.FindChild ? head.FindChild("IARImbueLine") : null; if (oldLine) oldLine.DeleteAsync(0);
-        if (!shown || !slot || !kids[slot - 1]) return;
+        diag.result = !shown ? "hidden" : !_heroId ? "hero unknown" : !id ? "item name not recognised" : !heroTab ? "no imbue table for hero"
+                    : !slot ? "no imbue data for this item" : !kids[slot - 1] ? "slot panel missing" : "";
+        if (diag.result) { imbueLog(diag); return; }
         var st = DATA.imbueStats && DATA.imbueStats[String(_heroId)] && DATA.imbueStats[String(_heroId)][id];
+        if (st) { diag.share = st[1]; diag.n = st[2]; }
         if (head) {
             var line = $.CreatePanel("Label", head, "IARImbueLine");
             line.text = T("imbueTip").replace("{s}", slot).replace("{p}", st ? Math.round(st[1] * 100) : "?");
@@ -286,7 +322,8 @@
         var circle = bg || (icon && icon.FindChildTraverse ? icon.FindChildTraverse("button_container") : null);
         var sc = 0, cw = 0, chh = 0, hp = null, cp = null;
         try { sc = host.actualuiscale_x || 1; cw = circle.actuallayoutwidth; chh = circle.actuallayoutheight; hp = host.GetPositionWithinWindow(); cp = circle.GetPositionWithinWindow(); } catch (e) {}
-        if (!(cw > 0 && chh > 0 && hp && cp)) { _imbueSig = ""; return; }
+        if (!(cw > 0 && chh > 0 && hp && cp)) { _imbueSig = ""; diag.result = "not laid out yet (retrying)"; imbueLog(diag); return; }
+        diag.result = "framed"; imbueLog(diag);
         var pad = 4, box = $.CreatePanel("Panel", host, "IARImbueStar");
         try { box.hittest = false; } catch (e) {}
         css(box, { width: Math.round(cw / sc + 2 * pad) + "px", height: Math.round(chh / sc + 2 * pad) + "px",
@@ -299,7 +336,7 @@
     // DATA.abilityOrder[hero] (strong players' most common order) that the current levels don't cover.
     // hud.xml: #AbilitiesContainer > CitadelHudAbilities#hud_signature (slots signature_1..4) builds one
     // CitadelAbilityIcon per slot at runtime (seen in-game, client 6819).
-    var _abilityBtns = null, _skillSig = "", _skillDiag = "-", _abilitySearchAt = 0;
+    var _abilityBtns = null, _skillSig = "", _skillDiag = "-", _abilitySearchAt = 0, _logLv = null, _logHint = 0;
     function abilityButtons(root) {
         if (_abilityBtns && _abilityBtns.length && valid(_abilityBtns[0])) return _abilityBtns;
         if (_hb < _abilitySearchAt || !root || !root.FindChildTraverse) return null;
@@ -356,8 +393,15 @@
         var ready = next ? abilityReady(btns[next - 1], lv[next - 1]) : false;
         var sig = next + "|" + (ready ? 1 : 0);
         _skillDiag = "lv " + lv.join("/") + " · next " + next + (ready ? " (ready)" : "");
+        // a level went up since the last tick: log which one, and whether it was the one we pointed at
+        if (_logLv && _logLv.join("") !== lv.join("")) {
+            for (var q = 0; q < 4; q++) if (lv[q] > _logLv[q]) ilog("skill_up", { slot: q + 1, lv: lv, hinted: _logHint, followed: _logHint === q + 1 ? 1 : 0 });
+        }
+        _logLv = lv.slice();
         if (sig === _skillSig) return;
         _skillSig = sig;
+        _logHint = next;
+        ilog("skill_hint", { next: next, ready: ready ? 1 : 0, lv: lv });
         for (var j = 0; j < 4; j++) {
             var old = btns[j].FindChild ? btns[j].FindChild("IARSkillMark") : null;
             if (old) old.DeleteAsync(0);
@@ -567,7 +611,7 @@
             _rpLast.push((isEnemy ? "E " : "") + "t" + (entryTeam || "?") + " " + item.substr(0, 18) + "->" + (nameToId(item) ? "ok" : "??"));
             if (isEnemy) {                                            // ENEMY team -> counter input
                 var id = nameToId(item);
-                if (id && !_enemyItems[String(id)]) { _enemyItems[String(id)] = 1; enemyAdded++; }
+                if (id && !_enemyItems[String(id)]) { _enemyItems[String(id)] = 1; enemyAdded++; ilog("enemy_buy", { item: Number(id), counters: CTR[String(id)] ? 1 : 0 }); }
             } else if (buyer && _heroId && resolveHeroToken(buyer) === _heroId) {   // OUR hero's own buy -> owned (needs a buyer label)
                 // Tab-INDEPENDENT owned detection: the feed logs every one of our purchases with its
                 // item NAME, so we no longer depend on having opened the item's shop tab (the flaky
@@ -739,6 +783,13 @@
     // Blend weight from research/sim.py: pick + W*value was most robust at W~16-32 (pure popularity went
     // below random when the community misvalues items; pure value suffers on rare heroes).
     var BLEND_W = 20;
+    // The same score split into what each term adds (sums to the score), so the log can say what decided a pick.
+    function scoreParts(val, pop, matchup, cost, syn, ctr, timeAdj, tierBias) {
+        var m = CFG.mode, v = val - 0.5;
+        return { pick: (m === "popular" || m === "blend") ? pop : 0,
+                 v: m === "efficiency" ? v / Math.max(cost || 1, 1) * 4000 : (m === "popular" ? 0 : BLEND_W * v),
+                 mu: 0.4 * matchup, syn: SYN_WEIGHT * syn, ctr: CTR_WEIGHT * ctr, ta: timeAdj, tb: tierBias };
+    }
     var SYN_WEIGHT = 0.8;   // build-so-far synergy strength (comparable to popularity term)
     // Enemy-item counters: DATA.ctr[enemyItemId][myItemId] = duration-stratified winner build-rate
     // lift when the enemy team owns enemyItemId (baked in 13_export.py from real match data — no
@@ -748,7 +799,9 @@
     var CTR = DATA.ctr || {};
     var CTR_WEIGHT = 1.0;
     var TIMING_WEIGHT = 1.5;   // buy-time lift (~±0.03) -> comparable to the matchup/synergy terms (popular mode)
-    var TIMING_WEIGHT_VAL = 10;   // value/blend modes: same units as their lift term, half its weight (noisier)
+    // value/blend modes: same units as their lift term but a fifth of its weight — buy-time lifts are raw
+    // (no adoption weighting) and ran up to ±0.1, so at 10 they decided the whole top 4 (seen in the log)
+    var TIMING_WEIGHT_VAL = 4;
     var _lastCand = [];     // full score-sorted candidate list from the last computeRecs (for Soul-holding)
     // Soul holding: preview the best items in the item TIER you should be saving toward.
     // Target = max of a souls-based tier (<1600->T2, <3200->T3, 6400+->T4) and a time-based
@@ -811,7 +864,8 @@
             // the tier shift over the game is already in pick rates, so the affluence proxy is halved.
             var tierBias = (CFG.mode === "efficiency") ? 0 : (ph ? 0.5 : 1) * TIER_W * aff01 * (meta.t - 2);
             var timeAdj = tm ? (CFG.mode === "popular" ? TIMING_WEIGHT : TIMING_WEIGHT_VAL) * tm.lift : 0;
-            cand.push({ id: id, name: itemName(id), cost: eff, fullCost: meta.c, tier: meta.t, slot: meta.s, icon: meta.ic || "", aff: true, syn: syn, ctr: ctr, pop: pop, late: !!(tm && tm.late), until: tm ? tm.until : null, imb: (imbH ? (imbH[id] || 0) : 0), score: modeScore(val, pop, w * adj, eff) + SYN_WEIGHT * syn + CTR_WEIGHT * ctr + tierBias + timeAdj });
+            cand.push({ id: id, name: itemName(id), cost: eff, fullCost: meta.c, tier: meta.t, slot: meta.s, icon: meta.ic || "", aff: true, syn: syn, ctr: ctr, pop: pop, late: !!(tm && tm.late), until: tm ? tm.until : null, imb: (imbH ? (imbH[id] || 0) : 0), score: modeScore(val, pop, w * adj, eff) + SYN_WEIGHT * syn + CTR_WEIGHT * ctr + tierBias + timeAdj,
+                        why: scoreParts(val, pop, w * adj, eff, syn, ctr, timeAdj, tierBias) });   // for the log
         }
         cand.sort(function (a, b) { return b.score - a.score; });   // re-rank by mode + matchup
         _lastCand = cand;                                            // for Soul-holding preview
@@ -1346,6 +1400,8 @@
         if (!why) return;
         markStaleCards();
         _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};
+        _logOwned = {}; _logRecSig = ""; _advice = []; _logLv = null;
+        ilog("match", { why: why, matchId: mid, hero: _heroId });
         // The purchase feed still lists the last map's buys (it is only read with the shop open, so some
         // were never seen) and old toasts may still be up: mark both as handled, or they would come back
         // as this match's enemy items and purchases.
@@ -1355,6 +1411,22 @@
         var ents = cont && cont.FindChildrenWithClassTraverse ? (cont.FindChildrenWithClassTraverse("recentPurchase") || []) : [];
         for (var i = 0; i < ents.length; i++) _rpSeen[rpKey(ents[i])] = 1;
         _ownLog = ["new match (" + why + ")"];
+    }
+    // Buys/sells from every source (toast, queue, shop cards, purchase feed) end up in _ownedAccum, so the
+    // log diffs that once a tick instead of hooking each source.
+    var _logOwned = {};
+    function logOwned() {
+        var k, src = _ownLog.length ? _ownLog[_ownLog.length - 1] : "";
+        for (k in _ownedAccum) if (_ownedAccum.hasOwnProperty(k) && !_logOwned[k]) {
+            var id = nameToId(k);
+            ilog("buy", { item: id ? Number(id) : k, name: k, rank: id ? _advice.indexOf(String(id)) : -1, of: _advice.length, src: src });
+        }
+        for (k in _logOwned) if (_logOwned.hasOwnProperty(k) && !_ownedAccum[k]) {
+            var sid = nameToId(k);
+            ilog("sell", { item: sid ? Number(sid) : k, name: k, src: src });
+        }
+        _logOwned = {};
+        for (k in _ownedAccum) if (_ownedAccum.hasOwnProperty(k)) _logOwned[k] = 1;
     }
     function watchOwn(root, shop) {
         var a = watchToasts(root), b = watchQueue(root);
@@ -1422,6 +1494,26 @@
     // hover tips, skill grid) is not — doing it every tick when nothing changed caused a periodic
     // ~3s stutter. So: compute first, hash the visible state, and skip the DOM churn if identical.
     var _renderSig = "";
+    // What the panel showed, logged whenever the visible list changes; _advice keeps the latest list so a
+    // purchase can be logged with the place the item had in it (-1 = not advised).
+    var _logRecSig = "", _advice = [];
+    function r3(x) { return Math.round((x || 0) * 1000) / 1000; }
+    function logRecs(recs, souls, t, owned) {
+        var top = [], n = Math.min(recs.length, Math.max(CFG.count, 8));
+        _advice = [];
+        for (var i = 0; i < recs.length; i++) _advice.push(recs[i].id);
+        for (var j = 0; j < n; j++) {
+            var it = recs[j], w = it.why || {};
+            // [id, score, then what each term adds: pick, value, matchup, synergy, counter, timing, tier bias;
+            //  affordable, late, imbue slot]
+            top.push([Number(it.id), r3(it.score), r3(w.pick), r3(w.v), r3(w.mu), r3(w.syn), r3(w.ctr), r3(w.ta), r3(w.tb),
+                      it.aff ? 1 : 0, it.late ? 1 : 0, it.imb || 0]);
+        }
+        var own = [];
+        for (var k in owned) if (owned.hasOwnProperty(k)) { var oid = nameToId(k); own.push(oid ? Number(oid) : k); }
+        ilog("recs", { hero: _heroId, band: bandId(), mode: CFG.mode, souls: souls, phase: flowPhase(t), enemies: _enemies,
+                       lane: _laneEnemies, owned: own, enemyItems: Object.keys(_enemyItems).map(Number), top: top });
+    }
     function refreshFloat(root, shop) {
         if (!valid(_float)) return;
         if (!shop) shop = shopIfOpen(root);
@@ -1469,6 +1561,7 @@
         parts.push("H" + hold.tier);
         for (var hj = 0; hj < hold.items.length; hj++) parts.push("h" + hold.items[hj].id + (hold.items[hj].aff ? "a" : "_"));
         var rsig = parts.join(",");
+        if (rsig !== _logRecSig) { _logRecSig = rsig; logRecs(recs, souls, t, owned); }
         updateShopBadges(shop, recs, holdIds);   // every refresh: the active shop tab changes what's bound
         if (rsig === _renderSig && _body.GetChildCount() > 0) return;   // nothing visible changed
         _renderSig = rsig;
@@ -1842,6 +1935,8 @@
                 _heroHist.push(((DATA.heroes && DATA.heroes[String(h)]) || h) + (top ? "(bar)" : "(shop)"));
                 if (_heroId) markStaleCards(); else _staleCards = [];   // a real switch: the old hero's cards are stale
                 _heroId = h; _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownLog = []; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
+                _logOwned = {}; _logRecSig = ""; _advice = [];
+                ilog("hero", { hero: h, name: DATA.heroes && DATA.heroes[String(h)], src: top ? "topbar" : "shop", band: bandId(), rank: [_rankTier, _rankSub] });
                 _enemyItems = {}; _rpSeen = {}; _rpEnemySig = "";   // reset accumulated enemy purchases
                 if (valid(_float)) refreshFloat(root, shop);
             }
@@ -1850,12 +1945,13 @@
         if (_heroId) {
             var en = scanEnemies(root, _heroId);
             var lane = scanLane(root, en);
-            if (lane.join(",") !== _laneEnemies.join(",")) { _laneEnemies = lane; if (valid(_float)) refreshFloat(root, shop); }
+            if (lane.join(",") !== _laneEnemies.join(",")) { _laneEnemies = lane; ilog("lane", { lane: lane }); if (valid(_float)) refreshFloat(root, shop); }
             if (!en.length) enemyDiag(root);   // reveal why (hideout=no team, or structure differs)
             if (en.length) {
                 var sig = en.slice().sort(function (a, b) { return a - b; }).join(",");
                 if (sig !== _enemySig) {
                     _enemySig = sig; _enemies = en;
+                    ilog("enemies", { enemies: en });
                     if (valid(_float)) refreshFloat(root, shop);
                 }
             }
@@ -1864,13 +1960,19 @@
     }
     var _shopWasOpen = false;
     function tick() {
+        guard("tick", tickBody);
+        $.Schedule(1.0, tick);
+    }
+    function tickBody() {
         var root = hudRoot();
         if (inBrawl(root)) {                       // Street Brawl -> keep the recommender fully hidden
             if (valid(_float)) css(_float, { visibility: "collapse" });
             hideCoach(); _shopWasOpen = false; if (_helpShown) closeHelp();
-            $.Schedule(1.0, tick); return;
+            return;
         }
+        _logT = getGameTimeSec(root);
         var shop = shopIfOpen(root);
+        if (!!shop !== _shopWasOpen) ilog("shop", { open: !!shop, souls: getSouls(root) });
         if (valid(_float) && !!shop !== _floatShown) { _floatShown = !!shop; css(_float, { visibility: shop ? "visible" : "collapse" }); }   // root-level panel: follow the shop
         if (shop) {
             // Enemy-purchase + owned accumulation. SHOP-OPEN ONLY now (was every tick, open or closed):
@@ -1890,15 +1992,17 @@
         } else { _shopWasOpen = false; coachCheck(root); if (_helpShown) closeHelp(); }   // tips close with the shop
         watchMatch(root);
         watchOwn(root, shop);
+        logOwned();
         if (CFG.qsync && _hb % 2 === 0) queueSync(root, shop);   // also with the shop closed: the game buys the queue front
         skillHint(root);
-        $.Schedule(1.0, tick);
     }
     function recLoop() {
-        if (!_brawlOn) {                           // skip all rec work while Street Brawl is active
-            var root = hudRoot(), shop = shopIfOpen(root);
-            if (shop) { scanPlayers(root, shop); refreshFloat(root, shop); }
-        }
+        guard("recLoop", function () {
+            if (!_brawlOn) {                       // skip all rec work while Street Brawl is active
+                var root = hudRoot(), shop = shopIfOpen(root);
+                if (shop) { scanPlayers(root, shop); refreshFloat(root, shop); }
+            }
+        });
         $.Schedule(CFG.refreshSec, recLoop);
     }
 
@@ -1906,9 +2010,14 @@
     // the shop closes (Esc) instead of on the next 1 s tick, and reacts to the imbue popup.
     var _floatShown = null;
     function fastLoop() {
-        var open = !_brawlOn && valid(_shopCache) && hasCls(_shopCache, "gShopOpen");
-        if (valid(_float) && open !== _floatShown) { _floatShown = open; css(_float, { visibility: open ? "visible" : "collapse" }); }
-        if (open) imbueHint(hudRoot());
+        guard("fastLoop", function () {
+            var open = !_brawlOn && valid(_shopCache) && hasCls(_shopCache, "gShopOpen");
+            if (valid(_float) && open !== _floatShown) { _floatShown = open; css(_float, { visibility: open ? "visible" : "collapse" }); }
+            // The imbue popup also opens for items bought from the Quick Buy queue with the shop closed, and
+            // it stays up after Esc closes the shop: check it either way (the popup lookup is cached; with
+            // the shop closed a missing popup is searched for every 3 s instead of every second).
+            if (!_brawlOn) imbueHint(hudRoot(), open);
+        });
         $.Schedule(0.1, fastLoop);
     }
     $.Schedule(1.0, tick);
