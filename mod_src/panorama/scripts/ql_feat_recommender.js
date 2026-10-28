@@ -272,11 +272,31 @@
     // holds the 4 ability buttons in slot order. DATA.imbue[hero][item] = the slot strong players pick
     // (pipeline/build.py from Phantom+ matches, imbueStats has the share), framed in the popup.
     var _imbuePanel = null, _imbueSearchAt = 0, _imbueSig = "", _imbueLogKey = "";
+    var _imbueSeenAt = {};                 // item id -> _hb when its popup was last seen shown
     function imbueLog(o) {                 // once per popup state + outcome (the not-laid-out retry runs every 0.1 s)
+        if (o.shown && o.item) _imbueSeenAt[o.item] = _hb;
         var key = o.shown + "|" + o.item + "|" + o.slot + "|" + o.result;
         if (key === _imbueLogKey) return;
         _imbueLogKey = key;
         if (o.shown || o.result !== "hidden") ilog("imbue", o);
+    }
+    // After buying an item we have an imbue slot for: if its popup was not seen within 3 s, log what the
+    // popup manager holds (the 2026-10-28 Compress Cooldown buy left no trace at all).
+    function imbueWatch(id) {
+        var t0 = _hb;
+        $.Schedule(3.0, function () {
+            guard("imbueWatch", function () {
+                if ((_imbueSeenAt[id] || -99) >= t0 - 5) return;
+                var labels = valid(_popupMgr) ? findAllById(_popupMgr, "modNameToPurchase", 0, []) : [], c = [];
+                for (var i = 0; i < labels.length && i < 6; i++) {
+                    var pr = popupRootOf(labels[i]), txt = "";
+                    try { txt = String(labels[i].text || "").substr(0, 30); } catch (e) {}
+                    c.push({ text: txt, root: pr ? pr.paneltype + "#" + pr.id : null, vis: pr ? (_vis(pr) ? 1 : 0) : null,
+                             hidden: pr ? (hasCls(pr, "Hidden") ? 1 : 0) : null, w: pr ? Math.round(pr.actuallayoutwidth || 0) : null });
+                }
+                ilog("imbue_missed", { item: Number(id), mgr: valid(_popupMgr) ? 1 : 0, labels: labels.length, cands: c });
+            });
+        });
     }
     // The game makes a new popup for each purchase, and the first one found stays valid but hidden: a
     // cached label went stale after the first popup (2026-10-26 log: later imbue buys were never seen).
@@ -327,8 +347,10 @@
         var diag = { shown: shown ? 1 : 0, shopOpen: open ? 1 : 0, text: text.substr(0, 40), item: id ? Number(id) : null, hero: _heroId,
                      slot: slot, popupType: popup ? popup.paneltype : null, menu: menu ? 1 : 0, kids: 0, result: "" };
         if (!menu) {
-            diag.result = shown ? "no SignatureSlotMenu (retrying)" : "hidden";
-            if (shown) _imbueSig = "";        // the popup may not have built its menu yet: look again next tick
+            // the popup may not have built its menu yet: look again next tick — unless there is no slot to
+            // frame anyway (Heroic Aura opens a popup of its own and was retried for nothing)
+            diag.result = !shown ? "hidden" : slot ? "no SignatureSlotMenu (retrying)" : "no SignatureSlotMenu";
+            if (shown && slot) _imbueSig = "";
             imbueLog(diag); return;
         }
         // AbilitySlotMenu (shop_ability_slot_menu.xml) keeps the 4 icons inside #abilitiesContainer
@@ -371,21 +393,51 @@
     // hud.xml: #AbilitiesContainer > CitadelHudAbilities#hud_signature (slots signature_1..4) builds one
     // CitadelAbilityIcon per slot at runtime (seen in-game, client 6819).
     var _abilityBtns = null, _skillSig = "", _skillDiag = "-", _abilitySearchAt = 0, _logLv = null, _logHint = 0, _lvMax = [0, 0, 0, 0];
+    // Several ability bars can exist at once (the 2026-10-28 match kept the one found at load: valid, never
+    // changing — no level-ups logged in 37 min). Every hud_signature / AbilitiesContainer is checked and the
+    // set that is on screen wins; the cached set is re-checked every 15 s and dropped once it is hidden.
+    var _abilityCheckAt = 0;
+    function findAllById(p, id, d, out) {
+        if (!p || d > 40) return out;
+        try { if (p.id === id) { out.push(p); return out; } } catch (e) {}
+        var kids = (p.Children ? p.Children() : []) || [];
+        for (var i = 0; i < kids.length; i++) findAllById(kids[i], id, d + 1, out);
+        return out;
+    }
+    function onScreen(p) {
+        try { return _vis(p) && p.actuallayoutwidth > 0 && p.actuallayoutheight > 0; } catch (e) { return false; }
+    }
     function abilityButtons(root) {
-        if (_abilityBtns && _abilityBtns.length && valid(_abilityBtns[0])) return _abilityBtns;
+        if (_abilityBtns && _abilityBtns.length && valid(_abilityBtns[0])) {
+            if (_hb < _abilityCheckAt) return _abilityBtns;
+            _abilityCheckAt = _hb + 15;
+            if (onScreen(_abilityBtns[0])) return _abilityBtns;
+            ilog("skill_bar", { dropped: "hidden" });
+            _abilityBtns = null;
+        }
         if (_hb < _abilitySearchAt || !root || !root.FindChildTraverse) return null;
         _abilitySearchAt = _hb + 5;
-        var cont = root.FindChildTraverse("hud_signature") || root.FindChildTraverse("AbilitiesContainer"), out = [], types = {};
-        (function walk(p, d) {
-            if (!p || d > 12 || out.length >= 4) return;
-            var t = ""; try { t = p.paneltype; } catch (e) {}
-            if (t === "CitadelHudAbilityButton" || t === "CitadelAbilityIcon") { out.push(p); return; }
-            if (d <= 3) types[t] = (types[t] || 0) + 1;
-            var k = (p.Children ? p.Children() : []) || [];
-            for (var i = 0; i < k.length; i++) walk(k[i], d + 1);
-        })(cont, 0);
-        _abilityBtns = out.length === 4 ? out : null;
-        if (!_abilityBtns) { var tl = []; for (var t in types) if (types.hasOwnProperty(t)) tl.push(t + "x" + types[t]); _skillDiag = (cont ? cont.id : "no container") + ": " + out.length + " buttons; " + tl.join(" "); }
+        var conts = findAllById(root, "hud_signature", 0, []);
+        if (!conts.length) conts = findAllById(root, "AbilitiesContainer", 0, []);
+        var best = null, types = {}, tried = [];
+        for (var c = 0; c < conts.length; c++) {
+            var out = [];
+            (function walk(p, d) {
+                if (!p || d > 12 || out.length >= 4) return;
+                var t = ""; try { t = p.paneltype; } catch (e) {}
+                if (t === "CitadelHudAbilityButton" || t === "CitadelAbilityIcon") { out.push(p); return; }
+                if (d <= 3) types[t] = (types[t] || 0) + 1;
+                var k = (p.Children ? p.Children() : []) || [];
+                for (var i = 0; i < k.length; i++) walk(k[i], d + 1);
+            })(conts[c], 0);
+            var vis = out.length === 4 && onScreen(out[0]);
+            tried.push(out.length + (vis ? "v" : "h"));
+            if (out.length === 4 && (vis || !best)) { best = out; if (vis) break; }
+        }
+        _abilityBtns = best && onScreen(best[0]) ? best : null;
+        _abilityCheckAt = _hb + 15;
+        if (_abilityBtns) ilog("skill_bar", { bars: conts.length, picked: tried.join(",") });
+        else { var tl = []; for (var t in types) if (types.hasOwnProperty(t)) tl.push(t + "x" + types[t]); _skillDiag = conts.length + " bars [" + tried.join(",") + "]; " + tl.join(" "); }
         return _abilityBtns;
     }
     // In-match HUD (client 6819) uses CitadelAbilityIcon (hud_ability_icon.css): not_trained = locked,
@@ -1464,6 +1516,7 @@
         for (k in _ownedAccum) if (_ownedAccum.hasOwnProperty(k) && !_logOwned[k]) {
             var id = nameToId(k);
             ilog("buy", { item: id ? Number(id) : k, name: k, rank: id ? _advice.indexOf(String(id)) : -1, of: _advice.length, src: src });
+            if (id && _heroId && DATA.imbue && DATA.imbue[String(_heroId)] && DATA.imbue[String(_heroId)][id]) imbueWatch(id);
         }
         for (k in _logOwned) if (_logOwned.hasOwnProperty(k) && !_ownedAccum[k]) {
             var sid = nameToId(k);
