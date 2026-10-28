@@ -1495,9 +1495,11 @@
         try { var m = valid(_dbgStats) ? String(_dbgStats.text || "").match(/(\d{5,})/) : null; mid = m ? m[1] : ""; } catch (e) {}
         if (mid && _matchId && mid !== _matchId) why = "match " + mid;
         else if (_matchRoot && root !== _matchRoot) why = "new map";
-        // A new map starts the clock near 0 (every real reset in the logs landed at 0-12 s); a small step
-        // back mid-game (2026-10-28: 49 -> 45 right after a match began) is the clock syncing, not a new match.
-        else if (_matchClock >= 0 && t < _matchClock - 3 && t <= 15) why = "clock " + _matchClock + "->" + t;
+        // A new map starts the clock near 0 (every real reset in the logs landed at 0-12 s). Before a match
+        // starts the clock counts DOWN in 4 s steps (2026-10-28: 49 -> 45 -> 41 ... each read as a new
+        // match): a step back counts only when it is a real jump (10 s+) into the first 15 s, or lands on
+        // 0-1 s — the countdown then fires once, as the match begins.
+        else if (_matchClock >= 0 && t < _matchClock - 3 && ((t <= 15 && _matchClock - t >= 10) || t <= 1)) why = "clock " + _matchClock + "->" + t;
         if (mid) _matchId = mid;
         _matchRoot = root;
         _matchClock = why ? t : Math.max(_matchClock, t);
