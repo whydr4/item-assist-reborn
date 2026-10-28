@@ -392,7 +392,7 @@
     // DATA.abilityOrder[hero] (strong players' most common order) that the current levels don't cover.
     // hud.xml: #AbilitiesContainer > CitadelHudAbilities#hud_signature (slots signature_1..4) builds one
     // CitadelAbilityIcon per slot at runtime (seen in-game, client 6819).
-    var _abilityBtns = null, _skillSig = "", _skillDiag = "-", _abilitySearchAt = 0, _logLv = null, _logHint = 0, _lvMax = [0, 0, 0, 0];
+    var _abilityBtns = null, _skillSig = "", _skillDiag = "-", _abilitySearchAt = 0, _logLv = null, _logHint = 0, _lvMax = [0, 0, 0, 0], _lvLow = [0, 0, 0, 0];
     // Several ability bars can exist at once (the 2026-10-28 match kept the one found at load: valid, never
     // changing — no level-ups logged in 37 min). Every hud_signature / AbilitiesContainer is checked and the
     // set that is on screen wins; the cached set is re-checked every 15 s and dropped once it is hidden.
@@ -471,8 +471,15 @@
         if (!order || !btns) return;
         var lv = [0, 0, 0, 0], plan = [0, 0, 0, 0], next = 0;
         // Levels only go up within a match, but the icon's Tier classes blink off for a moment (the log
-        // showed A2 "levelling up" to the same level 9 times): use the highest level seen this match.
-        for (var i = 0; i < 4; i++) { _lvMax[i] = Math.max(_lvMax[i], abilityLevel(btns[i])); lv[i] = _lvMax[i]; }
+        // showed A2 "levelling up" to the same level 9 times): keep the highest level seen. A lower reading
+        // that lasts 5 s is real, though — the first tick of a match can still show the hideout's levels
+        // (2026-10-28: A1 "level 4" at 0:58), and a pure max would keep that for the whole match.
+        for (var i = 0; i < 4; i++) {
+            var cur = abilityLevel(btns[i]);
+            if (cur >= _lvMax[i]) { _lvMax[i] = cur; _lvLow[i] = 0; }
+            else if (++_lvLow[i] >= 5) { _lvMax[i] = cur; _lvLow[i] = 0; }
+            lv[i] = _lvMax[i];
+        }
         for (var k = 0; k < order.length; k++) {
             var sl = order[k] - 1; if (sl < 0 || sl > 3) continue;
             plan[sl]++;
@@ -1489,7 +1496,7 @@
         if (!why) return;
         markStaleCards();
         _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};
-        _logOwned = {}; _logRecSig = ""; _advice = []; _logLv = null; _lvMax = [0, 0, 0, 0];
+        _logOwned = {}; _logRecSig = ""; _advice = []; _logLv = null; _lvMax = [0, 0, 0, 0]; _lvLow = [0, 0, 0, 0];
         // The map change can leave the previous map's panels valid but dead (the hideout shop stayed
         // valid and never opened again): drop every cached handle so this match's panels are found.
         _shopCands = []; _shopSeenOpen = false; _imbuePanel = null; _popupMgr = null; _abilityBtns = null;
@@ -2046,7 +2053,7 @@
         _heroHist.push(((DATA.heroes && DATA.heroes[String(h)]) || h) + "(" + src + ")");
         if (_heroId) markStaleCards(); else _staleCards = [];   // a real switch: the old hero's cards are stale
         _heroId = h; _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownLog = []; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
-        _logOwned = {}; _logRecSig = ""; _advice = []; _lvMax = [0, 0, 0, 0]; _logLv = null; _skillSig = "";
+        _logOwned = {}; _logRecSig = ""; _advice = []; _lvMax = [0, 0, 0, 0]; _lvLow = [0, 0, 0, 0]; _logLv = null; _skillSig = "";
         ilog("hero", { hero: h, name: DATA.heroes && DATA.heroes[String(h)], src: src, label: _heroLabel, band: bandId(), rank: [_rankTier, _rankSub] });
         _enemyItems = {}; _rpSeen = {}; _rpEnemySig = "";   // reset accumulated enemy purchases
         if (shop && valid(_float)) refreshFloat(root, shop);
