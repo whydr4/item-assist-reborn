@@ -271,7 +271,7 @@
     // (popups/popup_activated_ability_selection.xml): #modNameToPurchase is the item, #SignatureSlotMenu
     // holds the 4 ability buttons in slot order. DATA.imbue[hero][item] = the slot strong players pick
     // (pipeline/build.py from Phantom+ matches, imbueStats has the share), framed in the popup.
-    var _imbuePanel = null, _imbueSearchAt = 0, _imbueSig = "", _imbueLogKey = "";
+    var _imbuePanel = null, _imbueSearchAt = 0, _imbueSig = "", _imbueLogKey = "", _swapBuy = null;
     var _imbueSeenAt = {};                 // item id -> _hb when its popup was last seen shown
     function imbueLog(o) {                 // once per popup state + outcome (the not-laid-out retry runs every 0.1 s)
         if (o.shown && o.item) _imbueSeenAt[o.item] = _hb;
@@ -346,6 +346,9 @@
         _imbueSig = sig;
         var diag = { shown: shown ? 1 : 0, shopOpen: open ? 1 : 0, text: text.substr(0, 40), item: id ? Number(id) : null, hero: _heroId,
                      slot: slot, popupType: popup ? popup.paneltype : null, menu: menu ? 1 : 0, kids: 0, result: "" };
+        // "Your slots are full, sell an item" names the item being bought; the game shows no purchase toast
+        // for it, only the "sold" one — so a sale right after this popup means this item was bought
+        if (shown && id && diag.popupType === "PopupSellMaxItems") _swapBuy = { id: id, hb: _hb };
         if (!menu) {
             // the popup may not have built its menu yet: look again next tick — unless there is no slot to
             // frame anyway (Heroic Aura opens a popup of its own and was retried for nothing)
@@ -1474,6 +1477,9 @@
             now[sig] = 1;
             if (_toastSeen[sig] || primeOnly) continue;
             if (markOwned(id, kind > 0, kind > 0 ? "toast" : "sold")) changed = true;
+            // a sale that makes room for the item from the "slots full" popup = that item was bought
+            // (2026-10-28: Echo Shard bought this way was never counted and stayed the #1 advice)
+            if (kind < 0 && _swapBuy && _hb - _swapBuy.hb <= 6 && markOwned(_swapBuy.id, true, "swap")) { changed = true; _swapBuy = null; }
         }
         _toastSeen = now;
         return changed;

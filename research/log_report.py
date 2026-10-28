@@ -115,10 +115,15 @@ def report_match(m, names, heroes, items, out):
     out.append("(* = пока не по карману; причина = самая большая составляющая оценки)")
 
     # skills
-    ups = [e for e in ev if e["ev"] == "skill_up"]
-    if ups:
+    # Not counted: level-ups with no hint (the order in the data ran out) and bursts of several slots in
+    # one tick (the HUD re-reading all levels at a map change or the post-match screen).
+    raw = [e for e in ev if e["ev"] == "skill_up"]
+    per_tick = Counter(e["hb"] for e in raw)
+    ups = [e for e in raw if e.get("hinted") and per_tick[e["hb"]] == 1]
+    if raw:
         fol = sum(e.get("followed", 0) for e in ups)
-        out.append(f"\n### Прокачка: следовал подсказке {fol}/{len(ups)}")
+        skipped = len(raw) - len(ups)
+        out.append(f"\n### Прокачка: следовал подсказке {fol}/{len(ups)}" + (f" (не учтено {skipped}: без подсказки или пачкой)" if skipped else ""))
         out.append(", ".join(f"{clock(e['t'])} A{e['slot']}" + ("" if e.get("followed") else f" (советовал A{e.get('hinted') or '-'})") for e in ups))
 
     # imbue
