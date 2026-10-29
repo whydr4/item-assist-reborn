@@ -1502,15 +1502,40 @@
         else if (_matchClock >= 0 && t < _matchClock - 3 && ((t <= 15 && _matchClock - t >= 10) || t <= 1)) why = "clock " + _matchClock + "->" + t;
         if (mid) _matchId = mid;
         _matchRoot = root;
+        // A relog into the same match also reads 0-2 s for a moment before the real time comes back
+        // (2026-10-29: 659 -> 0, then 680 three seconds later), and resetting there threw away every item
+        // already bought. So a clock / map reset waits up to 10 s: if the clock comes back near where it
+        // was, it was a reconnect — only the panel handles are refreshed. A new match id resets at once.
+        if (_pendingReset) {
+            if (t > 30 && t >= _pendingReset.prev - 30) {
+                ilog("reconnect", { prev: _pendingReset.prev, t: t, why: _pendingReset.why });
+                _pendingReset = null; _matchClock = t;
+                return;
+            }
+            if (_hb - _pendingReset.hb < 10 && !why.match(/^match /)) return;   // still deciding
+            var pw = _pendingReset.why; _pendingReset = null;
+            if (!why) why = pw;
+        } else if (why && !why.match(/^match /)) {
+            dropHandles();
+            _pendingReset = { why: why, prev: _matchClock, hb: _hb };
+            return;
+        }
         _matchClock = why ? t : Math.max(_matchClock, t);
         if (!why) return;
-        markStaleCards();
-        _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};
-        _logOwned = {}; _logRecSig = ""; _advice = []; _logLv = null; _lvMax = [0, 0, 0, 0]; _lvLow = [0, 0, 0, 0];
-        // The map change can leave the previous map's panels valid but dead (the hideout shop stayed
-        // valid and never opened again): drop every cached handle so this match's panels are found.
+        resetMatch(root, why, mid);
+    }
+    var _pendingReset = null;
+    // The map change can leave the previous map's panels valid but dead (the hideout shop stayed valid and
+    // never opened again): drop every cached handle so this map's panels are found. Also done on a relog.
+    function dropHandles() {
         _shopCands = []; _shopSeenOpen = false; _imbuePanel = null; _popupMgr = null; _abilityBtns = null;
         _recentContCache = null; _goldLabelCache = null; _toastMgr = null; _topPlayers = null;
+    }
+    function resetMatch(root, why, mid) {
+        markStaleCards();
+        dropHandles();
+        _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};
+        _logOwned = {}; _logRecSig = ""; _advice = []; _logLv = null; _lvMax = [0, 0, 0, 0]; _lvLow = [0, 0, 0, 0];
         // the hero is picked again for the match: keeping the hideout hero gave Rem's advice and imbue
         // slots to a Deadman Danny for a whole evening (2026-10-26)
         _heroId = null; _heroCand = null; _heroCandN = 0; _enemies = []; _enemySig = ""; _laneEnemies = [];

@@ -127,12 +127,17 @@ def report_match(m, names, heroes, items, out):
         out.append(", ".join(f"{clock(e['t'])} A{e['slot']}" + ("" if e.get("followed") else f" (советовал A{e.get('hinted') or '-'})") for e in ups))
 
     # imbue
-    imb = [e for e in ev if e["ev"] in ("imbue", "imbue_panel")]
+    imb = [e for e in ev if e["ev"] in ("imbue", "imbue_panel", "imbue_missed")]
     if imb:
         out.append("\n### Окно выбора умения (imbue)")
         for e in imb:
             if e["ev"] == "imbue_panel":
                 out.append(f"- {clock(e['t'])} окно найдено (магазин {'открыт' if e.get('shopOpen') else 'закрыт'})")
+                continue
+            if e["ev"] == "imbue_missed":
+                shown = ", ".join(f"{c.get('text')!r} ({c.get('root')}, {'видно' if c.get('vis') else 'скрыто'})" for c in e.get("cands", []))
+                out.append(f"- {clock(e['t'])} {nm(e.get('item'))}: окно за 3 с не появилось — "
+                           + (f"в менеджере окон: {shown}" if shown else "в менеджере окон ни одного окна выбора (игра его не показала)"))
                 continue
             share = f", {round(e['share'] * 100)}% сильных, n={e.get('n')}" if e.get("share") is not None else ""
             out.append(f"- {clock(e['t'])} {nm(e.get('item')) if e.get('item') else repr(e.get('text'))}: "
