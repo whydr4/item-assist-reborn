@@ -87,10 +87,23 @@ def report_match(m, names, heroes, items, out):
     out.append("|---|---|---|---|---|")
     rec_at = None
     ranks, score_ranks = [], []
+    # A component bought in the same few seconds as the upgrade it goes into (Duration Extender with
+    # Superior Duration) is part of that one decision, not a choice of its own: shown, not counted.
+    buy_ev = [e for e in ev if e["ev"] == "buy"]
+    def component_of(e):
+        for f in buy_ev:
+            comp = (items.get(str(f["item"])) or {}).get("comp") or []
+            if f is not e and abs(f["t"] - e["t"]) <= 3 and any(str(c) == str(e["item"]) for c in comp):
+                return f["item"]
+        return None
     for e in ev:
         if e["ev"] == "recs":
             rec_at = e
         if e["ev"] != "buy":
+            continue
+        parent = component_of(e)
+        if parent:
+            out.append(f"| {clock(e['t'])} | {nm(e['item'])} | компонент {nm(parent)} | - | - |")
             continue
         r = e.get("rank", -1)
         ranks.append(r)
