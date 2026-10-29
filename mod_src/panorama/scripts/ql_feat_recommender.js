@@ -395,7 +395,7 @@
     // DATA.abilityOrder[hero] (strong players' most common order) that the current levels don't cover.
     // hud.xml: #AbilitiesContainer > CitadelHudAbilities#hud_signature (slots signature_1..4) builds one
     // CitadelAbilityIcon per slot at runtime (seen in-game, client 6819).
-    var _abilityBtns = null, _skillSig = "", _skillDiag = "-", _abilitySearchAt = 0, _logLv = null, _logHint = 0, _lvMax = [0, 0, 0, 0], _lvLow = [0, 0, 0, 0];
+    var _abilityBtns = null, _skillSig = "", _skillDiag = "-", _abilitySearchAt = 0, _logLv = null, _logHint = 0, _lvMax = [0, 0, 0, 0];
     // Several ability bars can exist at once (the 2026-10-28 match kept the one found at load: valid, never
     // changing — no level-ups logged in 37 min). Every hud_signature / AbilitiesContainer is checked and the
     // set that is on screen wins; the cached set is re-checked every 15 s and dropped once it is hidden.
@@ -474,15 +474,10 @@
         if (!order || !btns) return;
         var lv = [0, 0, 0, 0], plan = [0, 0, 0, 0], next = 0;
         // Levels only go up within a match, but the icon's Tier classes blink off for a moment (the log
-        // showed A2 "levelling up" to the same level 9 times): keep the highest level seen. A lower reading
-        // that lasts 5 s is real, though — the first tick of a match can still show the hideout's levels
-        // (2026-10-28: A1 "level 4" at 0:58), and a pure max would keep that for the whole match.
-        for (var i = 0; i < 4; i++) {
-            var cur = abilityLevel(btns[i]);
-            if (cur >= _lvMax[i]) { _lvMax[i] = cur; _lvLow[i] = 0; }
-            else if (++_lvLow[i] >= 5) { _lvMax[i] = cur; _lvLow[i] = 0; }
-            lv[i] = _lvMax[i];
-        }
+        // showed A2 "levelling up" to the same level 9 times), on Rem for longer than 5 s at a time
+        // (2026-10-29: ten A2 "level-ups" at level 4): keep the highest level seen this match. The hideout's
+        // levels can't leak in any more — a new match is only confirmed ~10 s in, when the HUD is current.
+        for (var i = 0; i < 4; i++) { _lvMax[i] = Math.max(_lvMax[i], abilityLevel(btns[i])); lv[i] = _lvMax[i]; }
         for (var k = 0; k < order.length; k++) {
             var sl = order[k] - 1; if (sl < 0 || sl > 3) continue;
             plan[sl]++;
@@ -1535,10 +1530,10 @@
         markStaleCards();
         dropHandles();
         _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};
-        _logOwned = {}; _logRecSig = ""; _advice = []; _logLv = null; _lvMax = [0, 0, 0, 0]; _lvLow = [0, 0, 0, 0];
+        _logOwned = {}; _logRecSig = ""; _advice = []; _logLv = null; _lvMax = [0, 0, 0, 0];
         // the hero is picked again for the match: keeping the hideout hero gave Rem's advice and imbue
         // slots to a Deadman Danny for a whole evening (2026-10-26)
-        _heroId = null; _heroCand = null; _heroCandN = 0; _enemies = []; _enemySig = ""; _laneEnemies = [];
+        _heroId = null; _heroCand = null; _heroCandN = 0; _enemies = []; _enemySig = ""; _laneEnemies = []; _enemyScanAt = 0;
         ilog("match", { why: why, matchId: mid, hero: _heroId });
         // The purchase feed still lists the last map's buys (it is only read with the shop open, so some
         // were never seen) and old toasts may still be up: mark both as handled, or they would come back
@@ -1556,8 +1551,11 @@
     function logOwned() {
         var k, src = _ownLog.length ? _ownLog[_ownLog.length - 1] : "";
         for (k in _ownedAccum) if (_ownedAccum.hasOwnProperty(k) && !_logOwned[k]) {
-            var id = nameToId(k);
-            ilog("buy", { item: id ? Number(id) : k, name: k, rank: id ? _advice.indexOf(String(id)) : -1, of: _advice.length, src: src });
+            var id = nameToId(k), byScore = -1;
+            // rank = place in the list as shown (affordable first); byScore = place by score alone, since an
+            // item still a little too dear 5 s before the buy sits deep in the "save for" tail of the list
+            for (var si = 0; id && si < _lastCand.length; si++) if (_lastCand[si].id === String(id)) { byScore = si; break; }
+            ilog("buy", { item: id ? Number(id) : k, name: k, rank: id ? _advice.indexOf(String(id)) : -1, byScore: byScore, of: _advice.length, src: src });
             if (id && _heroId && DATA.imbue && DATA.imbue[String(_heroId)] && DATA.imbue[String(_heroId)][id]) imbueWatch(id);
         }
         for (k in _logOwned) if (_logOwned.hasOwnProperty(k) && !_ownedAccum[k]) {
@@ -2088,7 +2086,7 @@
         _heroHist.push(((DATA.heroes && DATA.heroes[String(h)]) || h) + "(" + src + ")");
         if (_heroId) markStaleCards(); else _staleCards = [];   // a real switch: the old hero's cards are stale
         _heroId = h; _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownLog = []; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
-        _logOwned = {}; _logRecSig = ""; _advice = []; _lvMax = [0, 0, 0, 0]; _lvLow = [0, 0, 0, 0]; _logLv = null; _skillSig = "";
+        _logOwned = {}; _logRecSig = ""; _advice = []; _lvMax = [0, 0, 0, 0]; _logLv = null; _skillSig = "";
         ilog("hero", { hero: h, name: DATA.heroes && DATA.heroes[String(h)], src: src, label: _heroLabel, band: bandId(), rank: [_rankTier, _rankSub] });
         _enemyItems = {}; _rpSeen = {}; _rpEnemySig = "";   // reset accumulated enemy purchases
         if (shop && valid(_float)) refreshFloat(root, shop);
@@ -2119,7 +2117,7 @@
         }
         return _heroId;
     }
-    var _shopWasOpen = false;
+    var _shopWasOpen = false, _enemyScanAt = 0;
     function tick() {
         guard("tick", tickBody);
         $.Schedule(1.0, tick);
@@ -2170,6 +2168,10 @@
             var th = localHeroTopBar(root);
             if (th && th !== _heroId) setHero(th, "topbar", root, shop);
         }
+        // Enemies and lane from the top bar, also with the shop closed: a player buying through Quick Buy
+        // may never open the shop (2026-10-29: a whole match without matchups). Every 10 s until found,
+        // then every 60 s.
+        if (_heroId && _hb >= _enemyScanAt) { _enemyScanAt = _hb + (_enemies.length ? 60 : 10); scanPlayers(root, null); }
         watchOwn(root, shop);
         logOwned();
         if (CFG.qsync && _hb % 2 === 0) queueSync(root, shop);   // also with the shop closed: the game buys the queue front

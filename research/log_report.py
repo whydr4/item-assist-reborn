@@ -83,10 +83,10 @@ def report_match(m, names, heroes, items, out):
     # purchases vs advice
     buys = [e for e in ev if e["ev"] == "buy"]
     out.append("\n### Покупки и место в совете")
-    out.append("| время | предмет | место в списке | что советовал #1–#3 в тот момент |")
-    out.append("|---|---|---|---|")
+    out.append("| время | предмет | место в списке | по оценке | что советовал #1–#3 в тот момент |")
+    out.append("|---|---|---|---|---|")
     rec_at = None
-    ranks = []
+    ranks, score_ranks = [], []
     for e in ev:
         if e["ev"] == "recs":
             rec_at = e
@@ -96,11 +96,19 @@ def report_match(m, names, heroes, items, out):
         ranks.append(r)
         top3 = ", ".join(f"{nm(row[0])} ({driver(row)})" for row in (rec_at or {}).get("top", [])[:3]) if rec_at else "-"
         place = f"#{r + 1} из {e.get('of', '?')}" if r is not None and r >= 0 else "не в списке"
-        out.append(f"| {clock(e['t'])} | {nm(e['item'])} | {place} | {top3} |")
+        bs = e.get("byScore")
+        by_score = f"#{bs + 1}" if isinstance(bs, int) and bs >= 0 else "-"
+        if isinstance(bs, int):
+            score_ranks.append(bs)
+        out.append(f"| {clock(e['t'])} | {nm(e['item'])} | {place} | {by_score} | {top3} |")
     if ranks:
         n = len(ranks)
         out.append(f"\nСовпадение с советом: в топ-1 {sum(r == 0 for r in ranks)}/{n}, в топ-3 {sum(0 <= r < 3 for r in ranks)}/{n}, "
                    f"в топ-8 {sum(0 <= r < 8 for r in ranks)}/{n}, не советовалось {sum(r < 0 for r in ranks)}/{n}.")
+    if score_ranks:
+        m = len(score_ranks)
+        out.append(f"По оценке (без учёта, хватает ли душ): в топ-1 {sum(r == 0 for r in score_ranks)}/{m}, "
+                   f"в топ-3 {sum(0 <= r < 3 for r in score_ranks)}/{m}, в топ-8 {sum(0 <= r < 8 for r in score_ranks)}/{m}.")
     sells = [e for e in ev if e["ev"] == "sell"]
     if sells:
         out.append("Продано: " + ", ".join(f"{nm(e['item'])} ({clock(e['t'])})" for e in sells))
