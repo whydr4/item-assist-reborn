@@ -39,12 +39,13 @@ def last_big_patch():
 
 
 class Q:
-    def __init__(self, since):
+    def __init__(self, since, until=None):
         self.since = since
+        self.until = until
 
     def _f(self, level):
         lo, hi = LEVELS[level]
-        return {"min_unix_timestamp": self.since, "min_average_badge": lo, "max_average_badge": hi}
+        return {"min_unix_timestamp": self.since, "max_unix_timestamp": self.until, "min_average_badge": lo, "max_average_badge": hi}
 
     def hero_stats(self, level):
         return get("/v1/analytics/hero-stats", **self._f(level))

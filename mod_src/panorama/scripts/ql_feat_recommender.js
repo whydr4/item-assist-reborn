@@ -606,16 +606,10 @@
     // Matchup weight decays after the laning phase (matchup matters most early).
     function enemyWeight(t) { return t < 600 ? 1.0 : (t < 1200 ? 1.0 - 0.6 * (t - 600) / 600 : 0.4); }
     function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
-    // "Affluence" 0..1 = how flush/late you are. Ranking by winner build-rate alone
-    // floats cheap T1 staples to the top forever (95% of winners buy them), so a 60k-souls
-    // late-game player still gets a T1 at #1. As affluence rises we bias toward higher tiers
-    // (you've presumably bought the staples and each slot should be high-impact); early/poor
-    // leaves T1s on top. Souls OR game time drives it. Real fix is owned detection (task #1);
-    // this is the souls/phase proxy for "you're past the cheap-staples stage".
-    function affluence(souls, t) {
-        var bySouls = souls > 0 ? clamp01((souls - 3000) / 9000) : 0;   // 3k->0 .. 12k+->1
-        var byTime = clamp01(((t || 0) - 600) / 1200);                  // 10min->0 .. 30min->1
-        return Math.max(bySouls, byTime);
+    // Economic progress, independent of the clock: a poor late-game build must not be
+    // treated like a rich one merely because the match has lasted a long time.
+    function affluence(souls, owned) {
+        return clamp01((economicState(souls, owned).netWorth - 4000) / 24000);
     }
     var TIER_W = 0.28;   // strength of the affluence tier-bias
     // Diagnostic (throttled, few runs): when we have a hero but no enemies resolved,
@@ -645,7 +639,7 @@
         }
     }
 
-    // === LIVE ENEMY-PURCHASE FEED (drives data-driven counters) ===
+    // === RECENT ENEMY PURCHASE EVIDENCE (not an inventory snapshot) ===
     // The game's shop layout (citadel_hud_hero_shop.xml) has a NATIVE, READABLE purchase feed
     // (verified in-match) that QoLLock's "recent purchases" also reads — NOT the top-bar
     // mod_universal icons (those have native-set/unreadable src). Structure per entry:
@@ -659,7 +653,38 @@
     //     newest-first (old entries scroll off), so we ACCUMULATE (dedup buyer|item|time).
     // We collect the ENEMY team's item ids (entry team class != local team) into _enemyItems and
     // feed them to computeRecs' counter term. See [[reference-deadlock-recent-purchases-feed]].
-    var _enemyItems = {};   // enemy item id(str) -> 1, accumulated this match (reset on hero change)
+    var _enemyItems = {};   // item -> confidence from recent observations, NOT current inventory
+    var _enemyObservations = {};
+    function observeEnemyItem(id, buyer, age) {
+        var owner = buyer ? resolveHeroToken(buyer) : null, key = (owner || "unknown") + "|" + id;
+        var stamp = _hb - Math.max(0, age || 0), existing = _enemyObservations[key];
+        if (existing && existing.hb > stamp) return;
+        var covered = {};
+        if (owner) {
+            markCovered(String(id), covered);
+            for (var old in _enemyObservations) if (_enemyObservations.hasOwnProperty(old)) {
+                var observation = _enemyObservations[old];
+                if (observation.owner !== owner) continue;
+                var newerComponents = {}; markCovered(String(observation.item), newerComponents);
+                if (observation.hb >= stamp && newerComponents[String(id)]) return;
+                if (observation.hb <= stamp && covered[String(observation.item)]) delete _enemyObservations[old];
+            }
+        }
+        _enemyObservations[key] = { item: String(id), owner: owner, hb: stamp };
+        ilog("enemy_observation", { item: Number(id), owner: owner, source: "purchase_feed", inventoryConfirmed: false });
+    }
+    function refreshEnemyEvidence() {
+        var now = {}, expired = 0;
+        for (var key in _enemyObservations) if (_enemyObservations.hasOwnProperty(key)) {
+            var o = _enemyObservations[key], ttl = o.owner ? 300 : 120, age = Math.max(0, _hb - o.hb);
+            if (age >= ttl) { delete _enemyObservations[key]; expired++; continue; }
+            // Unknown buyers get weaker evidence; never infer a sale or another player's upgrade.
+            var confidence = (o.owner ? 0.8 : 0.4) * (1 - age / ttl);
+            now[o.item] = Math.max(now[o.item] || 0, confidence);
+        }
+        _enemyItems = now;
+        if (expired) ilog("enemy_evidence_expired", { count: expired });
+    }
     var _rpSeen = {};       // dedup: "buyer|item|time|tier" -> 1
     var _rpLast = [];       // last few raw feed entries, for the settings diagnostics
     var _rpFound = false, _rpEnemySig = "";
@@ -677,7 +702,7 @@
         return 0;   // spectator / unknown -> can't tell friend from foe, skip
     }
     function rpKey(e) {
-        return _rpText(e, "recentModPurchaserHero") + "|" + _rpText(e, "recentModPurchaseName") + "|" + _rpText(e, "recentTimePurchased") + "|" + _rpText(e, "recentModTierCost");
+        return (hasCls(e, "isEnemyPurchase") ? "enemy" : (hasCls(e, "isLocalPlayerPurchase") ? "local" : (hasCls(e, "isTeam1Purchase") ? "team1" : "team2"))) + "|" + _rpText(e, "recentModPurchaserHero") + "|" + _rpText(e, "recentModPurchaseName") + "|" + _rpText(e, "recentTimePurchased") + "|" + _rpText(e, "recentModTierCost");
     }
     function collectRecent(root, shop) {
         if (!root) return;   // always run: owned-tracking is independent of the Counters toggle
@@ -702,14 +727,19 @@
             // every entry below it is older and also seen -> stop. Steady state (no new buys) scans ~1
             // entry instead of ~50, removing the per-second FindChildrenWithClassTraverse storm that
             // was the 1-second stutter.
-            if (_rpSeen[key]) break; _rpSeen[key] = 1;   // one purchase event = buyer+item+time
+            if (_rpSeen[key]) continue; _rpSeen[key] = 1;   // one purchase event = buyer+item+time
             var entryTeam = (e.BHasClass && e.BHasClass("isTeam1Purchase")) ? 1 : ((e.BHasClass && e.BHasClass("isTeam2Purchase")) ? 2 : 0);
             var isEnemy = !!(e.BHasClass && e.BHasClass("isEnemyPurchase")) || (lt && entryTeam && entryTeam !== lt);
             if (_rpLast.length >= 3) _rpLast.shift();   // shown in the settings diagnostics
             _rpLast.push((isEnemy ? "E " : "") + "t" + (entryTeam || "?") + " " + item.substr(0, 18) + "->" + (nameToId(item) ? "ok" : "??"));
             if (isEnemy) {                                            // ENEMY team -> counter input
                 var id = nameToId(item);
-                if (id && !_enemyItems[String(id)]) { _enemyItems[String(id)] = 1; enemyAdded++; ilog("enemy_buy", { item: Number(id), counters: CTR[String(id)] ? 1 : 0 }); }
+                if (id) {
+                    var purchaseTime = _rpText(e, "recentTimePurchased"), age = 0;
+                    if (/^\d+:\d{2}$/.test(purchaseTime)) age = Math.max(0, getGameTimeSec(root) - parseClock(purchaseTime));
+                    observeEnemyItem(id, buyer, age); enemyAdded++;
+                    ilog("enemy_buy", { item: Number(id), counters: CTR[String(id)] ? 1 : 0, inventoryConfirmed: false });
+                }
             } else if (buyer && _heroId && resolveHeroToken(buyer) === _heroId) {   // OUR hero's own buy -> owned (needs a buyer label)
                 // Tab-INDEPENDENT owned detection: the feed logs every one of our purchases with its
                 // item NAME, so we no longer depend on having opened the item's shop tab (the flaky
@@ -720,6 +750,7 @@
                 if (!_ownedAccum[lc] && markOwned(nameToId(lc), true, "feed")) ownedAdded++;
             }
         }
+        if (enemyAdded) refreshEnemyEvidence();
         if (enemyAdded && CFG.counters) {
             var names = []; for (var k in _enemyItems) if (_enemyItems.hasOwnProperty(k)) names.push((DATA.items[k] && DATA.items[k].n) || k);
             var sig = names.slice().sort().join(",");
@@ -728,10 +759,20 @@
         if ((enemyAdded || ownedAdded) && shop && valid(_float)) refreshFloat(root, shop);   // strike/re-rank now
     }
 
+    var _gameClockPanel = null, _clockProbeAt = 0, _lastClockValue = 0;
     function getGameTimeSec(root) {
-        try { if (typeof Game.GetGameTime === "function") return Math.floor(Game.GetGameTime()); } catch (e) {}
-        var g = root && root.FindChildTraverse && (root.FindChildTraverse("HudGameTime") || root.FindChildTraverse("GameTime"));
-        return g && g.text ? parseClock(g.text) : 0;
+        if ((!valid(_gameClockPanel) || !onScreen(_gameClockPanel)) && _hb >= _clockProbeAt) {
+            _clockProbeAt = _hb + 3;
+            var clocks = findAllById(root, "HudGameTime", 0, []).concat(findAllById(root, "GameTime", 0, []));
+            _gameClockPanel = null;
+            for (var i = 0; i < clocks.length; i++) if (onScreen(clocks[i]) && /\d+:\d{2}/.test(String(clocks[i].text || ""))) { _gameClockPanel = clocks[i]; break; }
+        }
+        if (valid(_gameClockPanel) && onScreen(_gameClockPanel)) {
+            var text = String(_gameClockPanel.text || "");
+            if (/\d+:\d{2}/.test(text)) { _lastClockValue = parseClock(text); return _lastClockValue; }
+        }
+        // Missing/hidden clocks during loading are unknown, not a new match at 00:00.
+        return _lastClockValue;
     }
     var _goldLabelCache = null;
     function getSouls(root) {
@@ -743,7 +784,7 @@
         if (!root || !root.FindChildTraverse) return 0;
         var l = valid(_goldLabelCache) ? _goldLabelCache : root.FindChildTraverse("hudCurGoldLabel");
         _goldLabelCache = valid(l) ? l : null;
-        if (l && l.text) { var n = parseInt(String(l.text).replace(/[^0-9]/g, ""), 10); if (!isNaN(n)) return n; }
+        if (l && l.text) { var n = parseSoulAmount(l.text); if (n !== null) return n; }
         return 0;   // hideout shows ∞ -> NaN -> 0 (no affordability filter, fine)
     }
     // Owned items: each shop entry is CitadelShopMod.mod_view with a .modName label and a
@@ -922,15 +963,45 @@
     // (no adoption weighting) and ran up to ±0.1, so at 10 they decided the whole top 4 (seen in the log)
     var TIMING_WEIGHT_VAL = 4;
     var _lastCand = [];     // full score-sorted candidate list from the last computeRecs (for Soul-holding)
-    // Soul holding: preview the best items in the item TIER you should be saving toward.
-    // Target = max of a souls-based tier (<1600->T2, <3200->T3, 6400+->T4) and a time-based
-    // tier (<20min->T2, <30min->T3, 30min+->T4), so late game always points at T4 even right
-    // after a buy leaves you poor. Always shows that tier's best picks (affordable or not —
-    // the ⏳/opacity marks what you can't yet buy).
+    // Saving preview uses the same observed/estimated economy as the main queue.
+    var _liveNetWorth = 0, _netWorthLabel = null, _netWorthProbeAt = 0;
+    function parseSoulAmount(text) {
+        var value = String(text || "").toLowerCase().replace(/[\s\u00a0\u202f]/g, "");
+        var m = value.match(/^(\d+(?:[.,]\d+)?)(k|m|тыс\.?|млн\.?)?$/);
+        if (!m) return null;
+        var numeric = m[1];
+        if (!m[2] && /^\d{1,3}([.,]\d{3})+$/.test(numeric)) numeric = numeric.replace(/[.,]/g, "");
+        var n = Number(numeric.replace(",", "."));
+        return Math.round(n * (m[2] ? (/^(m|млн)/.test(m[2]) ? 1000000 : 1000) : 1));
+    }
+    function readNetWorth(root) {
+        if (!valid(_netWorthLabel) && _hb >= _netWorthProbeAt) {
+            _netWorthProbeAt = _hb + 10;
+            var players = topBarPlayers(root);
+            for (var i = 0; i < players.length; i++) if (hasCls(players[i], "LocalPlayer")) {
+                var ids = ["Networth", "NetWorth", "netWorth", "totalNetWorth"];
+                for (var j = 0; j < ids.length; j++) {
+                    var label = players[i].FindChildTraverse ? players[i].FindChildTraverse(ids[j]) : null;
+                    if (label && parseSoulAmount(label.text) !== null) { _netWorthLabel = label; break; }
+                }
+            }
+        }
+        var amount = valid(_netWorthLabel) ? parseSoulAmount(_netWorthLabel.text) : null;
+        _liveNetWorth = amount !== null ? amount : 0;
+    }
+    function economicState(souls, owned) {
+        var invested = 0, covered = coveredComponents(owned || {});
+        for (var key in owned) if (owned.hasOwnProperty(key)) {
+            var id = nameToId(key), meta = id && DATA.items[String(id)];
+            if (meta && !covered[String(id)]) invested += meta.c || 0;
+        }
+        var estimate = Math.max(0, souls || 0) + invested;
+        var netWorth = Math.max(_liveNetWorth || 0, estimate);
+        return { netWorth: netWorth, source: _liveNetWorth >= estimate && _liveNetWorth > 0 ? "hud" : "balance_plus_items",
+                 invested: invested, tier: netWorth >= 28000 ? 4 : (netWorth >= 12000 ? 3 : (netWorth >= 4000 ? 2 : 1)) };
+    }
     function holdTier(souls, t) {
-        var sTier = souls < 1600 ? 2 : (souls < 3200 ? 3 : 4);
-        var tSec = t || 0, tTier = tSec < 1200 ? 2 : (tSec < 1800 ? 3 : 4);
-        return sTier > tTier ? sTier : tTier;
+        return Math.max(2, economicState(souls, _ownedAccum).tier);
     }
     function computeHolding(souls, t) {
         var empty = { tier: 0, items: [] };
@@ -955,7 +1026,7 @@
         var w = (enemies && enemies.length) ? enemyWeight(tSec || 0) : 0;
         if ((tSec || 0) < 600 && _laneEnemies.length) enemies = _laneEnemies;   // laning: the heroes in your lane matter
         var ownedCount = 0; for (var o in owned) if (owned.hasOwnProperty(o)) ownedCount++;
-        var aff01 = affluence(souls, tSec);   // flush/late -> bias toward higher tiers
+        var aff01 = affluence(souls, owned);   // economic progress -> bias toward higher tiers
         // Owned item ids that drive synergy (map owned names -> ids present in syn table).
         var synDrivers = [];
         if (synH) for (var on in owned) if (owned.hasOwnProperty(on)) { var oid = nameToId(on); if (oid && synH[oid]) synDrivers.push(oid); }
@@ -971,36 +1042,47 @@
             var syn = 0;                                       // synergy: sum co-build lifts over owned
             for (var d = 0; d < synDrivers.length; d++) { var sD = synH[synDrivers[d]]; if (sD && sD[id] != null) syn += sD[id]; }
             var ctr = 0;                                       // counter: sum lifts over enemy team's purchases
-            if (ctrOn) for (var xi = 0; xi < ctrX.length; xi++) { var cX = CTR[ctrX[xi]]; if (cX && cX[id] != null) ctr += cX[id]; }
+            if (ctrOn) for (var xi = 0; xi < ctrX.length; xi++) { var cX = CTR[ctrX[xi]]; if (cX && cX[id] != null) ctr += cX[id] * (_enemyItems[ctrX[xi]] || 0); }
             var val = list[k][1], pop = (list[k].length > 2 ? list[k][2] : 0);
             var ph = phS[id];                                   // this phase's lift/pick beats the all-game average
             if (ph) { val = 0.5 + ph[0] * ph[1] / (ph[1] + 0.05); pop = ph[1]; }   // lift trusted by adoption (build.py reliability)
-            else if (phHas) pop = 0;   // phase table exists but strong players don't buy this now: don't fall
+            else if (phHas) {
+                if (!phaseCandidateSupported(syn, ctr)) continue;
+                val = 0.5; pop = 0;
+            }   // phase table exists but strong players don't buy this now: don't fall
                                        // back to the all-game pick (early staples would top the 40-min list)
             var tm = timingInfo(hero, id, tSec);
             var eff = effectiveCost(meta, owned);   // discount for owned components
             // no flush/late tier-bias in Efficiency mode — it already accounts for cost. With phase data
             // the tier shift over the game is already in pick rates, so the affluence proxy is halved.
-            var tierBias = (CFG.mode === "efficiency") ? 0 : (ph ? 0.5 : 1) * TIER_W * aff01 * (meta.t - 2);
+            var tierBias = 0; // price alone is not evidence that this item suits the hero
             var timeAdj = tm ? (CFG.mode === "popular" ? TIMING_WEIGHT : TIMING_WEIGHT_VAL) * tm.lift : 0;
             cand.push({ id: id, name: itemName(id), cost: eff, fullCost: meta.c, tier: meta.t, slot: meta.s, icon: meta.ic || "", aff: true, syn: syn, ctr: ctr, pop: pop, late: !!(tm && tm.late), until: tm ? tm.until : null, imb: (imbH ? (imbH[id] || 0) : 0), score: modeScore(val, pop, w * adj, eff) + SYN_WEIGHT * syn + CTR_WEIGHT * ctr + tierBias + timeAdj,
                         why: scoreParts(val, pop, w * adj, eff, syn, ctr, timeAdj, tierBias) });   // for the log
         }
         cand.sort(function (a, b) { return b.score - a.score; });   // re-rank by mode + matchup
         _lastCand = cand;                                            // for Soul-holding preview
-        return orderPurchases(cand, souls, tSec, ownedCount);
+        return orderPurchases(cand, souls, tSec, ownedCount, owned);
     }
-    function orderPurchases(cand, souls, tSec, ownedCount) {
-        var time = Math.max(0, tSec || 0), minTier = time >= 1800 ? 4 : (time >= 1200 ? 3 : (time >= 540 ? 2 : 1));
-        // A zero balance during a match is known poverty, not the hideout fallback.
-        if (!(souls > 0) && !time && !ownedCount) return cand.filter(function (x) { x.aff = false; return x.tier <= 2; });
-        var goals = [], filler = [];
+    function phaseCandidateSupported(syn, ctr) {
+        return (syn || 0) >= 0.04 || (ctr || 0) >= 0.02;
+    }
+    function orderPurchases(cand, souls, tSec, ownedCount, owned) {
+        var economy = economicState(souls, owned || {});
+        if (!(souls > 0) && !(tSec > 0) && !ownedCount) return cand.filter(function (x) { x.aff = false; return x.tier <= 2; });
+        var goal = null;
         for (var i = 0; i < cand.length; i++) {
             cand[i].aff = souls > 0 && cand[i].cost <= souls;
-            (cand[i].tier >= minTier ? goals : filler).push(cand[i]);
+            if (!goal && cand[i].tier >= economy.tier) goal = cand[i];
         }
-        // Score order persists while saving; spending on a cheap filler cannot jump ahead of the goal.
-        return goals.concat(filler);
+        // Preserve evidence-based score order. Saving can promote ONE nearly-as-good goal,
+        // never an entire expensive tier above substantially better upgrades and counters.
+        var best = cand.length ? cand[0] : null;
+        if (goal && best && goal !== best && goal.score >= best.score - 0.10 &&
+            !(best.aff && phaseCandidateSupported(best.syn, best.ctr))) {
+            return [goal].concat(cand.filter(function (item) { return item !== goal; }));
+        }
+        return cand;
     }
 
     // ---- UI helpers ---------------------------------------------------------
@@ -1300,7 +1382,7 @@
         tip(win, "Pct", "show each item's build rate");
         tip(win, "Counters", "promotes items that beat the enemy team's live build");
         tip(win, "Soul hold", "previews the best items in the tier");
-        tip(win, "", "you're saving toward (souls + game time)");
+        tip(win, "", "you're saving toward (net worth and your current build)");
         tip(win, "Item tips", "hover a row for why it's good on your hero");
         var tnote = $.CreatePanel("Label", win, "");
         tnote.text = "Enable tips for items summarized from various builds and hero abilities (might be innacurate).";
@@ -1367,7 +1449,7 @@
     // route those through the game's CitadelConCommand UI event. Its AddItem event is native-only
     // in client 6839: the text parser always returns null. Read the actual HUD queue after rebuilding.
     var QS_N = 6;                       // queue length we keep: enough that Quick Buy never runs dry between refreshes
-    var _qsGeneration = 0;
+    var _qsGeneration = 0, _qbProbeAt = 0, _qsLastRequest = "", _qsRetryAt = 0;
     var _qsNextAt = 0, _qbPanel = null, _qsSetupDone = false, _qsSetupLog = "-", _qsWant = [], _qsAqWasOn = false;
     // Turning Auto-queue off gives the game's own "auto-queue build" back if we were the ones who
     // switched it off (it is a saved game setting, not ours).
@@ -1379,7 +1461,12 @@
     }
     function qbQueue() {
         var root = hudRoot();
-        if (!valid(_qbPanel)) _qbPanel = root && root.FindChildTraverse ? root.FindChildTraverse("QuickbuyQueue") : null;   // cached: no per-tick tree walk
+        if ((!valid(_qbPanel) || !onScreen(_qbPanel)) && _hb >= _qbProbeAt) {
+            _qbProbeAt = _hb + 5;
+            var queues = findAllById(root, "QuickbuyQueue", 0, []);
+            _qbPanel = null;
+            for (var qi = 0; qi < queues.length; qi++) if (onScreen(queues[qi])) { _qbPanel = queues[qi]; break; }
+        }
         var q = _qbPanel, out = [];
         var kids = q && q.Children ? (q.Children() || []) : [];
         for (var i = 0; i < kids.length; i++) {
@@ -1422,6 +1509,14 @@
         ilog("queue_setup", { autoQueue: aqOn, autoBuy: abOn, action: _qsSetupLog });
         _qsSetupDone = aqOn === false && abOn === true; // confirm actual state on the next tick
     }
+    function queueMatchesGoal(have, want) {
+        if (!want.length || !have.length) return false;
+        var allowed = {}, front = {}; front[String(want[0])] = 1; markCovered(String(want[0]), front);
+        for (var i = 0; i < want.length; i++) { allowed[String(want[i])] = 1; markCovered(String(want[i]), allowed); }
+        if (!front[String(have[0])]) return false;
+        for (var j = 0; j < have.length; j++) if (!have[j] || !allowed[String(have[j])]) return false;
+        return true; // Native UI may expand components or expose only the current queue head.
+    }
     function queueSync(root, shop) {
         if (!CFG.qsync || !_heroId || _hb < _qsNextAt) return;
         queueSetup(root);
@@ -1431,10 +1526,12 @@
         for (var i = 0; i < recs.length && want.length < QS_N; i++) want.push(recs[i].id);
         _qsWant = want;
         if (!want.length) return;
-        var have = qbQueue().map(function (x) { return x.id; }), foreign = false, frontSame = true;
-        for (var j = 0; j < have.length; j++) if (want.indexOf(have[j]) === -1) { foreign = true; break; }
-        for (var f = 0; f < 3 && f < want.length; f++) if (have[f] !== want[f]) { frontSame = false; break; }
-        if (!foreign && frontSame && have.length >= Math.min(QS_N, want.length)) return;   // small reshuffles at the tail don't churn the queue
+        var have = qbQueue().map(function (x) { return x.id; });
+        if (queueMatchesGoal(have, want)) return;
+        var request = want.join(",");
+        // Hidden/collapsed queue entries and native component expansion must not cause a clear loop.
+        if (request === _qsLastRequest && _hb < _qsRetryAt) return;
+        _qsLastRequest = request; _qsRetryAt = _hb + 60;
         // rebuild: clear, let the server apply it, then append the picks in order (an add right after
         // the clear was lost in testing, so the first one waits 0.8 s and the rest are spaced 0.5 s)
         _qsNextAt = _hb + 8; _qsBusyUntil = _hb + 6;      // entries vanish during the rebuild: not purchases
@@ -1557,7 +1654,7 @@
         // starts the clock counts DOWN in 4 s steps (2026-10-28: 49 -> 45 -> 41 ... each read as a new
         // match): a step back counts only when it is a real jump (10 s+) into the first 15 s, or lands on
         // 0-1 s — the countdown then fires once, as the match begins.
-        else if (_matchClock >= 0 && t < _matchClock - 3 && ((t <= 15 && _matchClock - t >= 10) || t <= 1)) why = "clock " + _matchClock + "->" + t;
+        else if (_matchClock > 60 && t < _matchClock - 3 && ((t <= 15 && _matchClock - t >= 10) || t <= 1)) why = "clock " + _matchClock + "->" + t;
         if (mid) _matchId = mid;
         _matchRoot = root;
         // A relog into the same match also reads 0-2 s for a moment before the real time comes back
@@ -1587,12 +1684,12 @@
     // never opened again): drop every cached handle so this map's panels are found. Also done on a relog.
     function dropHandles() {
         _shopCands = []; _shopSeenOpen = false; _imbuePanel = null; _popupMgr = null; _abilityBtns = null;
-        _recentContCache = null; _goldLabelCache = null; _toastMgr = null; _topPlayers = null; _qbPanel = null;
+        _recentContCache = null; _goldLabelCache = null; _toastMgr = null; _topPlayers = null; _qbPanel = null; _qbProbeAt = 0; _netWorthLabel = null; _liveNetWorth = 0; _netWorthProbeAt = 0; _gameClockPanel = null; _clockProbeAt = 0;
     }
     function resetMatch(root, why, mid) {
         markStaleCards();
         dropHandles();
-        _qsGeneration++; _ownedAccum = {}; _ownedAt = {}; _ownedMissing = {}; _soldAwaitClear = {}; _inventoryChanges = {}; _adviceHistory = []; _qPrev = null; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};
+        _qsLastRequest = ""; _qsRetryAt = 0; _qsGeneration++; _ownedAccum = {}; _ownedAt = {}; _ownedMissing = {}; _soldAwaitClear = {}; _inventoryChanges = {}; _adviceHistory = []; _qPrev = null; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};
         _logOwned = {}; _logRecSig = ""; _advice = []; _logLv = null; _lvMax = [0, 0, 0, 0];
         // the hero is picked again for the match: keeping the hideout hero gave Rem's advice and imbue
         // slots to a Deadman Danny for a whole evening (2026-10-26)
@@ -1601,7 +1698,7 @@
         // The purchase feed still lists the last map's buys (it is only read with the shop open, so some
         // were never seen) and old toasts may still be up: mark both as handled, or they would come back
         // as this match's enemy items and purchases.
-        _enemyItems = {}; _rpEnemySig = ""; _qsSetupDone = false;
+        _enemyItems = {}; _enemyObservations = {}; _rpEnemySig = ""; _qsSetupDone = false;
         _rankTier = null; _rankSub = null; _rankNextAt = 0; _rankTries = 0; _rankState = "";
         watchToasts(root, true);
         var cont = valid(_recentContCache) ? _recentContCache : (root && root.FindChildTraverse ? root.FindChildTraverse("RecentPurchasesContainer") : null);
@@ -1655,7 +1752,7 @@
         var rk = _rankTier !== null ? RANK_NAMES[_rankTier] + (_rankSub !== null ? " " + _rankSub : "") : T("noRank");
         hintLabel(T("data") + ": " + bandName + (CFG.rank ? "" : " · " + T("autoRank") + ": " + rk) + " · " + T("tiersHint"));
         // 2) auto-queue: our picks become the game's Quick Buy queue
-        switchRow(_cfgBox, T("queue"), CFG.qsync, function (v) { CFG.qsync = v; _qsGeneration++; ilog("config", { key: "qsync", value: v }); _qsNextAt = 0; _qsSetupDone = false; if (!v) queueRestore(); renderConfig(); });
+        switchRow(_cfgBox, T("queue"), CFG.qsync, function (v) { CFG.qsync = v; _qsLastRequest = ""; _qsRetryAt = 0; _qsGeneration++; ilog("config", { key: "qsync", value: v }); _qsNextAt = 0; _qsSetupDone = false; if (!v) queueRestore(); renderConfig(); });
         hintLabel(T("queueHint"));
         // 3) rank numbers on the shop cards
         switchRow(_cfgBox, T("marks"), CFG.badges, function (v) { CFG.badges = v; refreshFloat(hudRoot(), null); renderConfig(); });
@@ -1716,7 +1813,7 @@
         var own = [];
         for (var k in owned) if (owned.hasOwnProperty(k)) { var oid = nameToId(k); own.push(oid ? Number(oid) : k); }
         ilog("recs", { hero: _heroId, band: bandId(), mode: CFG.mode, souls: souls, phase: flowPhase(t), enemies: _enemies,
-                       lane: _laneEnemies, owned: own, enemyItems: Object.keys(_enemyItems).map(Number), top: top });
+                       lane: _laneEnemies, owned: own, enemyItems: Object.keys(_enemyItems).map(Number), enemyEvidence: _enemyItems, economy: economicState(souls, owned), top: top });
     }
     function refreshFloat(root, shop) {
         if (!valid(_float)) return;
@@ -1897,7 +1994,7 @@
     // = the crossover where T4 is the modal buy. (25 min is still a T3 game — 45% T3 vs 28% T4.)
     var COACH_MIN_TIER = 3;      // baseline: skip T1/T2 — the coach is for impactful items only
     var COACH_T4_MIN = 1680;     // past 28 min, only nudge T4 (data-derived crossover)
-    function coachMinTier(tSec) { return (tSec || 0) >= COACH_T4_MIN ? 4 : COACH_MIN_TIER; }
+    function coachMinTier(tSec) { return Math.max(COACH_MIN_TIER, economicState(getSouls(hudRoot()), _ownedAccum).tier); }
     var COACH_BG = "#e9e0c6f7";      // paper/parchment bubble
     var COACH_TEXT = "#2b2416";      // dark ink on paper
     var COACH_SHIFT = "-38px";       // portrait + tail nudged left of centre (~half portrait width)
@@ -2157,10 +2254,10 @@
         if (_heroHist.length >= 4) _heroHist.shift();
         _heroHist.push(((DATA.heroes && DATA.heroes[String(h)]) || h) + "(" + src + ")");
         if (_heroId) markStaleCards(); else _staleCards = [];   // a real switch: the old hero's cards are stale
-        _heroId = h; _qsGeneration++; _ownedAccum = {}; _ownedAt = {}; _ownedMissing = {}; _soldAwaitClear = {}; _inventoryChanges = {}; _adviceHistory = []; _qPrev = null; _ownLog = []; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
+        _heroId = h; _qsLastRequest = ""; _qsRetryAt = 0; _qsGeneration++; _ownedAccum = {}; _ownedAt = {}; _ownedMissing = {}; _soldAwaitClear = {}; _inventoryChanges = {}; _adviceHistory = []; _qPrev = null; _ownLog = []; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
         _logOwned = {}; _logRecSig = ""; _advice = []; _lvMax = [0, 0, 0, 0]; _logLv = null; _skillSig = "";
         ilog("hero", { hero: h, name: DATA.heroes && DATA.heroes[String(h)], src: src, label: _heroLabel, band: bandId(), rank: [_rankTier, _rankSub] });
-        _enemyItems = {}; _rpSeen = {}; _rpEnemySig = "";   // reset accumulated enemy purchases
+        _enemyItems = {}; _enemyObservations = {}; _rpSeen = {}; _rpEnemySig = "";   // reset accumulated enemy purchases
         if (shop && valid(_float)) refreshFloat(root, shop);
     }
     function scanPlayers(root, shop) {
@@ -2248,6 +2345,8 @@
         // may never open the shop (2026-10-29: a whole match without matchups). Every 10 s until found,
         // then every 60 s.
         if (_heroId && _hb >= _enemyScanAt) { _enemyScanAt = _hb + (_enemies.length >= 6 ? 60 : 10); scanPlayers(root, null); }
+        refreshEnemyEvidence();
+        readNetWorth(root);
         watchOwn(root, shop);
         logOwned();
         if (CFG.qsync && _hb % 2 === 0) queueSync(root, shop);   // also with the shop closed: the game buys the queue front

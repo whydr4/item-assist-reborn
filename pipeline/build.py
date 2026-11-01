@@ -16,9 +16,10 @@ import time
 from collections import defaultdict
 
 import queries
+from paths import game_dir
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
-GAME = r"C:\Program Files (x86)\Steam\steamapps\common\Deadlock\game\citadel"
+GAME = os.path.join(game_dir("Deadlock"), "game", "citadel")
 LADDER = ("all", "high", "pro")   # shared tables (next item, timing, matchups) lean on strong players
 K_WR = 500          # pseudo-matches pulling a win-rate lift toward the broader level; empirical Bayes
                     # 0.25 / tau^2 with tau ~2.2 pp real rank difference (research/rank_consistency.py)
@@ -343,19 +344,7 @@ def find_icon(index, folder, url):
     return None
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=os.path.join(ROOT, "data", "recommender_data.js"))
-    ap.add_argument("--heroes", help="comma-separated hero ids to build (default: all collected); matchups still use all")
-    a = ap.parse_args()
-
-    run = json.load(open(os.path.join(ROOT, "data", "run.json"), encoding="utf-8"))
-    q = queries.Q(run["since"])
-    old = load_old()
-    index = panorama_index()
-
-    heroes_a = {h["id"]: h for h in queries.active_heroes() if h["id"] in run["hero_ids"]}
-    assets = queries.assets_items()
+def build_item_metadata(assets, old, index):
     by_class = {it["class_name"]: it for it in assets}
     shop = {str(it["id"]): it for it in assets if it.get("type") == "upgrade" and it.get("shopable") and not it.get("disabled")}
 
@@ -363,18 +352,57 @@ def main():
     for iid, it in shop.items():
         o = old["items"].get(iid)
         if o:
-            items[iid] = dict(o, c=it.get("cost", o["c"]), t=it.get("item_tier", o["t"]), cls=it["class_name"])
+            items[iid] = dict(o, n=it["name"], c=it.get("cost", o["c"]), t=it.get("item_tier", o["t"]), cls=it["class_name"])
         else:
             ic = find_icon(index, "panorama/images/items/", it.get("shop_image"))
             items[iid] = {"n": it["name"], "c": it["cost"], "t": it["item_tier"], "s": it.get("item_slot_type"), "ic": ic or "",
                           "cls": it["class_name"]}   # internal name, e.g. for the game's quick-buy events
+    for iid, it in shop.items():
+        raw = it.get("component_items") or []
+        components = []
+        for component in raw:
+            if isinstance(component, str) and component in by_class:
+                components.append(by_class[component]["id"])
+            elif isinstance(component, int) or (isinstance(component, str) and component.isdigit()):
+                components.append(int(component))
+            elif isinstance(component, dict) and component.get("id"):
+                components.append(int(component["id"]))
+        items[iid].pop("comp", None)
+        if components:
+            items[iid]["comp"] = components
+    return items, shop
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default=os.path.join(ROOT, "data", "recommender_data.js"))
+    ap.add_argument("--heroes", help="comma-separated hero ids to build (default: all collected); matchups still use all")
+    a = ap.parse_args()
+
+    run = json.load(open(os.path.join(ROOT, "data", "run.json"), encoding="utf-8"))
+    if run.get("complete") is False:
+        sys.exit("Collection incomplete: run collect.py --resume before building")
+    q = queries.Q(run["since"], run.get("until"))
+    old = load_old()
+    index = panorama_index()
+
+    if run.get("assets_file"):
+        with open(os.path.join(ROOT, "data", "cache", run["assets_file"]), encoding="utf-8") as f:
+            snapshot = json.load(f)
+        hero_assets, assets = snapshot["heroes"], snapshot["items"]
+    else:
+        hero_assets, assets = queries.active_heroes(), queries.assets_items()
+    heroes_a = {h["id"]: h for h in hero_assets if h["id"] in run["hero_ids"]}
+    by_class = {it["class_name"]: it for it in assets}
+    items, shop = build_item_metadata(assets, old, index)
     item_tier = {int(k): v["t"] for k, v in items.items()}
 
     hero_matches = {lv: {r["hero_id"]: r["matches"] for r in q.hero_stats(lv)} for lv in queries.LEVELS}
 
     out = {"meta": {}, "heroes": {}, "heroIcon": {}, "items": items,
            "bands": {b: {"rec": {}, "recp": {}, "games": {}} for b in queries.BANDS}, "next": {},
-           "tm": {}, "vs": {}, "syn": {}, "ctr": old.get("ctr", {}), "imbue": {}}
+           "tm": {}, "vs": {}, "syn": {}, "ctr": {str(enemy): {str(item): lift for item, lift in tab.items() if str(item) in items}
+                for enemy, tab in old.get("ctr", {}).items() if str(enemy) in items}, "imbue": {}}
     extra = {"byName": {}, "abilityOrder": {}, "abilityIcon": {}, "tips": {}}
     report = []
     hero_ids = sorted(heroes_a)
@@ -453,6 +481,8 @@ def main():
         "client_version": client_version(),
         "generated": time.strftime("%Y-%m-%d %H:%M", time.localtime()),
         "since": time.strftime("%Y-%m-%d", time.gmtime(run["since"])),
+        "snapshot_until": run.get("until"),
+        "legacy_signals": ["ctr", "tips", "imbue_fallback"],
         "badge_levels": queries.LEVELS,
         "bands": [{"id": b, "name": queries.BAND_NAMES[b], "ladder": list(l)} for b, l in queries.BANDS.items()],
         "default_band": queries.DEFAULT_BAND,

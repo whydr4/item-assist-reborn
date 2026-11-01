@@ -91,6 +91,8 @@ panorama/images/control_icons/spinner_png.vtex_c
 panorama/images/control_icons/star_png.vtex_c
 panorama/images/control_icons/warning_alt_png.vtex_c
 panorama/images/control_icons/x_close_filled_png.vtex_c
+panorama/images/damage_melee_psd.vtex_c
+panorama/images/damage_psd.vtex_c
 panorama/images/events/voting_sept2026/sticker_artist_psd.vtex_c
 panorama/images/events/voting_sept2026/sticker_baba_psd.vtex_c
 panorama/images/events/voting_sept2026/sticker_chessmaster_psd.vtex_c
@@ -150,6 +152,7 @@ panorama/images/glyphs/mousewheeldown_dark.vsvg_c
 panorama/images/glyphs/mousewheelup.vsvg_c
 panorama/images/glyphs/mousewheelup_dark.vsvg_c
 panorama/images/glyphs/unbound.vsvg_c
+panorama/images/gold.vsvg_c
 panorama/images/guide/orb_icon_psd.vtex_c
 panorama/images/hero_badges/hero_badge_active_ring_progress_psd.vtex_c
 panorama/images/hero_badges/hero_badge_active_ring_psd.vtex_c
@@ -1628,6 +1631,7 @@ panorama/images/items/brawl/shrink_ray_psd.vtex_c
 panorama/images/items/brawl/timeless_emblem_psd.vtex_c
 panorama/images/items/brawl/unstable_concoction_psd.vtex_c
 panorama/images/items/seasonal/2025_snowball_psd.vtex_c
+panorama/images/items/seasonal/2026_candy_psd.vtex_c
 panorama/images/items/seasonal/voting_poster_psd.vtex_c
 panorama/images/items/spirit/arcane_surge_psd.vtex_c
 panorama/images/items/spirit/arctic_blast_psd.vtex_c
@@ -2424,6 +2428,7 @@ panorama/images/shop/catalog/catalog_shop_top_recommendations_header_psd.vtex_c
 panorama/images/shop/catalog/catalog_tooltip_bg_modifies_spirit_psd.vtex_c
 panorama/images/shop/catalog/catalog_tooltip_bg_modifies_vitality_psd.vtex_c
 panorama/images/shop/catalog/catalog_tooltip_bg_modifies_weapon_psd.vtex_c
+panorama/images/shop/catalog/catalog_tooltip_header_halloween2026_psd.vtex_c
 panorama/images/shop/catalog/catalog_tooltip_header_spirit_psd.vtex_c
 panorama/images/shop/catalog/catalog_tooltip_header_vitality_psd.vtex_c
 panorama/images/shop/catalog/catalog_tooltip_header_weapon_corrupted_psd.vtex_c
@@ -2534,6 +2539,8 @@ panorama/images/tooltips/ability/ap_backer_owned_png.vtex_c
 panorama/images/tooltips/ability/ap_rect_available_png.vtex_c
 panorama/images/tooltips/ability/ap_rect_cant_afford_png.vtex_c
 panorama/images/tooltips/ability/ap_rect_default_png.vtex_c
+panorama/images/tooltips/items/tooltip_backer_halloween2026_mask_psd.vtex_c
+panorama/images/tooltips/items/tooltip_backer_halloween2026_psd.vtex_c
 panorama/images/tooltips/items/tooltip_backer_spirit_color_psd.vtex_c
 panorama/images/tooltips/items/tooltip_backer_spirit_corrupted_psd.vtex_c
 panorama/images/tooltips/items/tooltip_backer_spirit_mask_psd.vtex_c

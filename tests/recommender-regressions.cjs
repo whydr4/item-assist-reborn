@@ -11,8 +11,8 @@ function context(names, values) {
     }
     return ctx;
 }
-const ordering = context(['orderPurchases'], {});
-const items = () => [{id:'cheap',tier:1,cost:800},{id:'goal',tier:4,cost:6400},{id:'mid',tier:3,cost:3200}];
+const ordering = context(['economicState','phaseCandidateSupported','orderPurchases'], {DATA:{items:{}},nameToId:()=>null,coveredComponents:()=>({}),_liveNetWorth:30000});
+const items = () => [{id:'cheap',tier:1,cost:800,score:0.8},{id:'goal',tier:4,cost:6400,score:0.78},{id:'mid',tier:3,cost:3200,score:0.75}];
 let picks = ordering.orderPurchases(items(), 900, 2400, 8);
 assert.equal(picks[0].id, 'goal');
 assert.equal(picks[0].aff, false);
@@ -87,7 +87,8 @@ for(const lang of ['english','russian']) {
 console.log('PASS: real English and Russian quick-buy labels resolve to the same six item IDs');
 
 const tasks=[],actual=[];
-const sync=context(['queueSync'],{
+const sync=context(['queueMatchesGoal','queueSync'],{
+    markCovered:()=>{},_qsLastRequest:'',_qsRetryAt:0,
     CFG:{qsync:true},_heroId:35,_hb:10,_qsNextAt:0,_qsGeneration:0,QS_N:3,_enemies:[],
     queueSetup:()=>{},getSouls:()=>600,getOwnedNames:()=>({}),getGameTimeSec:()=>10,
     computeRecs:()=>[{id:'1'},{id:'2'},{id:'3'}],qbQueue:()=>actual.map(id=>({id})),
@@ -101,3 +102,48 @@ while(tasks.some(t=>t.delay<4)) {const index=tasks.findIndex(t=>t.delay<4);tasks
 assert.deepEqual(actual,['1','2','3']);
 sync._hb=20;sync.queueSync({},{});assert.deepEqual(actual,['1','2','3']);
 console.log('PASS: append transport preserves recommendation order and stable queue is not rebuilt');
+
+ordering._liveNetWorth=3000;
+assert.equal(ordering.orderPurchases(items(),900,2400,2)[0].id,'cheap','poor late-game player is not forced to T4');
+ordering._liveNetWorth=30000;
+assert.equal(ordering.orderPurchases(items(),900,120,8)[0].id,'goal','rich early-game player can save for T4');
+const counters=context(['observeEnemyItem','refreshEnemyEvidence'],{
+    _hb:100,_enemyItems:{},_enemyObservations:{},resolveHeroToken:b=>b==='enemy'?1:2,
+    markCovered:(id,out)=>{if(id==='2')out['1']=1;},ilog:()=>{}
+});
+counters.observeEnemyItem('1','enemy',0);counters.refreshEnemyEvidence();assert.equal(counters._enemyItems['1'],0.8);
+counters.observeEnemyItem('2','other',0);assert.ok(counters._enemyObservations['1|1'],'another player upgrade does not erase evidence');
+counters.observeEnemyItem('2','enemy',0);assert.ok(!counters._enemyObservations['1|1']);
+counters.observeEnemyItem('1','enemy',10);assert.ok(!counters._enemyObservations['1|1'],'old feed entry cannot restore a consumed component');
+counters.observeEnemyItem('3','',0);counters._hb=160;counters.refreshEnemyEvidence();assert.equal(counters._enemyItems['3'],0.2);
+counters._hb=221;counters.refreshEnemyEvidence();assert.ok(!counters._enemyItems['3']);
+counters._hb=401;counters.refreshEnemyEvidence();assert.deepEqual(Object.keys(counters._enemyItems),[]);
+const amounts=context(['parseSoulAmount'],{});
+assert.equal(amounts.parseSoulAmount('12,5 тыс.'),12500);assert.equal(amounts.parseSoulAmount('12.5k'),12500);
+assert.equal(amounts.parseSoulAmount('12 500'),12500);assert.equal(amounts.parseSoulAmount('∞'),null);
+console.log('PASS: economy independent of clock, owner-aware component evidence, stale evidence decay/expiry, localized soul amounts');
+
+assert.equal(amounts.parseSoulAmount('12,500'),12500);assert.equal(amounts.parseSoulAmount('12.500'),12500);
+const economy=context(['economicState'],{_liveNetWorth:0,DATA:{items:{1:{c:800},2:{c:3200}}},
+    nameToId:key=>key==='base'?'1':'2',coveredComponents:()=>({'1':1})});
+assert.equal(economy.economicState(600,{base:1,upgrade:1}).netWorth,3800,'consumed component cannot inflate wealth');
+const situational=[{id:'counter',tier:1,cost:800,score:1.5,ctr:0.03},{id:'save',tier:4,cost:6400,score:1}];
+assert.equal(ordering.orderPurchases(situational,900,2000,8)[0].id,'counter');
+console.log('PASS: thousands separators, no component double-counting, affordable high-value counter interrupts saving');
+
+assert.equal(ordering.orderPurchases([{id:'good-upgrade',tier:3,cost:1600,score:1},{id:'bad-expensive',tier:4,cost:6400,score:0.2}],2000,2000,8)[0].id,'good-upgrade');
+assert.equal(ordering.phaseCandidateSupported(0,0),false);
+assert.equal(ordering.phaseCandidateSupported(0.06,0),true);
+console.log('PASS: weak expensive items cannot displace strong upgrades; absent phase data needs contextual evidence');
+
+const nativeQueue=context(['queueMatchesGoal'],{markCovered:(id,out)=>{if(id==='2')out['1']=1;}});
+assert.equal(nativeQueue.queueMatchesGoal(['2','1','3'],['2','3']),true);
+assert.equal(nativeQueue.queueMatchesGoal(['2'],['2','3']),true);
+assert.equal(nativeQueue.queueMatchesGoal(['9'],['2','3']),false);
+assert.equal(nativeQueue.queueMatchesGoal(['3','2'],['2','3']),false);
+let currentClock={text:'12:00',visible:true};
+const clocks=context(['getGameTimeSec','parseClock'],{_gameClockPanel:currentClock,_clockProbeAt:0,_lastClockValue:720,_hb:100,
+    valid:p=>!!p,onScreen:p=>p.visible,findAllById:()=>[]});
+assert.equal(clocks.getGameTimeSec({}),720);currentClock.visible=false;
+assert.equal(clocks.getGameTimeSec({}),720,'hidden clock must not become 00:00');
+console.log('PASS: native component expansion and head-only queues do not churn; missing clocks do not reset match');
