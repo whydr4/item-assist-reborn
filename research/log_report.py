@@ -80,6 +80,9 @@ def report_match(m, names, heroes, items, out):
     lane = next((e["lane"] for e in reversed(ev) if e["ev"] == "lane"), [])
     out.append(f"enemies: {', '.join(heroes.get(str(x), str(x)) for x in en) or '-'}; lane: {', '.join(heroes.get(str(x), str(x)) for x in lane) or '-'}")
 
+    if any(e.get("ev") == "buy" and "adviceHb" not in e for e in ev):
+        out.append("\nСтарый формат лога: места покупок восстановлены по последнему снимку рекомендаций до появления предмета в инвентаре. Полный список и порядок по оценке в старом логе недоступны.")
+
     # purchases vs advice
     buys = [e for e in ev if e["ev"] == "buy"]
     out.append("\n### Покупки и место в совете")
@@ -105,15 +108,33 @@ def report_match(m, names, heroes, items, out):
         if parent:
             out.append(f"| {clock(e['t'])} | {nm(e['item'])} | компонент {nm(parent)} | - | - |")
             continue
-        r = e.get("rank", -1)
-        ranks.append(r)
+        r = e.get("rank")
+        # Old builds logged after the purchased item was removed from advice. Reconstruct only
+        # positions actually present in the last pre-purchase snapshot; absence from a truncated
+        # top-8 is unknown, never evidence that the item was not recommended.
+        historical = None
+        if "adviceHb" not in e:
+            for previous in ev:
+                if previous is e:
+                    break
+                if previous.get("ev") == "recs" and str(e["item"]) not in {str(x) for x in previous.get("owned", [])}:
+                    historical = previous
+            rows = (historical or {}).get("top", [])
+            r = next((i for i, row in enumerate(rows) if str(row[0]) == str(e["item"])), None)
+            if historical:
+                rec_at = historical
+        if isinstance(r, int):
+            ranks.append(r)
         top3 = ", ".join(f"{nm(row[0])} ({driver(row)})" for row in (rec_at or {}).get("top", [])[:3]) if rec_at else "-"
-        place = f"#{r + 1} из {e.get('of', '?')}" if r is not None and r >= 0 else "не в списке"
-        bs = e.get("byScore")
+        place = f"#{r + 1}" if isinstance(r, int) and r >= 0 else ("не в списке" if r == -1 else "нет достоверного снимка")
+        bs = e.get("byScore") if "adviceHb" in e else None
         by_score = f"#{bs + 1}" if isinstance(bs, int) and bs >= 0 else "-"
         if isinstance(bs, int):
             score_ranks.append(bs)
         out.append(f"| {clock(e['t'])} | {nm(e['item'])} | {place} | {by_score} | {top3} |")
+    unknown = sum(component_of(e) is None for e in buy_ev) - len(ranks)
+    if unknown:
+        out.append(f"\nПокупок без достоверного места в совете: {unknown}; исключены из долей совпадения.")
     if ranks:
         n = len(ranks)
         out.append(f"\nСовпадение с советом: в топ-1 {sum(r == 0 for r in ranks)}/{n}, в топ-3 {sum(0 <= r < 3 for r in ranks)}/{n}, "

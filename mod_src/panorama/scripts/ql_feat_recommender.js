@@ -260,9 +260,8 @@
             var labels = (t.FindChildrenWithClassTraverse ? t.FindChildrenWithClassTraverse(cls[c]) : []) || [];
             for (var i = 0; i < labels.length; i++) {
                 var id = resolveHeroToken(labels[i].text);
-                if (id) { if (!out.length) { try { _heroLabel = String(labels[i].text || "").substr(0, 40); } catch (e) {} } out.push(id); }
+                if (id && out.indexOf(id) === -1) { if (!out.length) { try { _heroLabel = String(labels[i].text || "").substr(0, 40); } catch (e) {} } out.push(id); }
             }
-            if (out.length) return out;
         }
         return out;
     }
@@ -520,7 +519,7 @@
             var k = (p.Children ? p.Children() : []) || [];
             for (var i = 0; i < k.length; i++) walk(k[i], d + 1);
         })(root, 0);
-        _topPlayers = out;
+        if (out.length >= 12) _topPlayers = out;
         return out;
     }
     function hasCls(p, c) { try { return !!(p && p.BHasClass && p.BHasClass(c)); } catch (e) { return false; } }
@@ -542,10 +541,10 @@
     // Rank: the match's ranked summary (CitadelHudRankedPlayerSummary) has one .Player per player, the
     // local one .IsLocalPlayer, each with a #RankedBadge carrying Rank0..Rank11 (badge tier) and a
     // .Subrank label. Tier -> data band like pipeline/queries.py BANDS (badge = tier*10 + subrank).
-    var _rankTier = null, _rankSub = null, _rankTries = 0;
+    var _rankTier = null, _rankSub = null, _rankTries = 0, _rankNextAt = 0, _rankState = "", _rankNotice = null;
     function detectRank(root) {
-        if (_rankTier !== null || _rankTries >= 20 || !root || !root.FindChildTraverse) return;
-        _rankTries++;
+        if (_rankTier !== null || _hb < _rankNextAt || !root || !root.FindChildTraverse) return;
+        _rankTries++; _rankNextAt = _hb + 10;
         var sum = root.FindChildTraverse("RankedPlayerSummary");
         if (!sum || !sum.FindChildrenWithClassTraverse) return;
         var pl = sum.FindChildrenWithClassTraverse("Player") || [], me = null;
@@ -582,14 +581,19 @@
         })(root, 0);
         if (teams.length === 2) {
             var a = heroesInPanel(teams[0]), b = heroesInPanel(teams[1]);
-            if (a.length || b.length) en = (a.indexOf(myHeroId) !== -1) ? b : ((b.indexOf(myHeroId) !== -1) ? a : b);
+            if (a.length || b.length) en = (a.indexOf(myHeroId) !== -1) ? b : ((b.indexOf(myHeroId) !== -1) ? a : []);
         }
         // B fallback: pair each PlayerHeroHidden with its entry's TeamRelationship label
-        if (!en.length) {
+        {
             var all = (root.FindChildrenWithClassTraverse ? root.FindChildrenWithClassTraverse("PlayerHeroHidden") : []) || [];
             for (var i = 0; i < all.length; i++) {
                 var id = resolveHeroToken(all[i].text); if (!id || id === myHeroId) continue;
-                var entry = all[i]; for (var u = 0; u < 6 && entry && entry.GetParent; u++) entry = entry.GetParent();
+                var entry = all[i];
+                for (var u = 0; u < 10 && entry && entry.GetParent; u++) {
+                    if (entry.paneltype === "CitadelHudTopBarPlayer") break;
+                    entry = entry.GetParent();
+                }
+                if (!entry || entry.paneltype !== "CitadelHudTopBarPlayer") continue;
                 var rl = entry && entry.FindChildrenWithClassTraverse ? (entry.FindChildrenWithClassTraverse("TeamRelationship") || []) : [];
                 var rel = ""; try { if (rl.length) rel = String(rl[0].text || "").toLowerCase(); } catch (e) {}
                 if (rel.indexOf("enem") !== -1 || rel.indexOf("opp") !== -1) en.push(id);
@@ -713,7 +717,7 @@
                 // reset on hero change). Limitation (same as the tab scan today): it's a purchase STREAM,
                 // so sold items stay struck until hero change; consumed components read as owned like now.
                 var lc = canonItem(item);   // feed shows the client's language; owned keys are English
-                if (!_ownedAccum[lc]) { _ownedAccum[lc] = 1; _ownedAt[lc] = _hb; ownedAdded++; }
+                if (!_ownedAccum[lc] && markOwned(nameToId(lc), true, "feed")) ownedAdded++;
             }
         }
         if (enemyAdded && CFG.counters) {
@@ -755,6 +759,23 @@
     // change are remembered and ignored until each one shows "not owned" once; every other card counts
     // as usual, so buying the same item again in the new match is still seen.
     var _ownedAccum = {}, _ownedAt = {}, _staleCards = [], _ownedDiagN = 0;
+    var _ownedMissing = {}, _soldAwaitClear = {}, _inventoryChanges = {}, _adviceHistory = [];
+    function purchaseAdvice(id) {
+        for (var i = _adviceHistory.length - 1; i >= 0; i--) {
+            var a = _adviceHistory[i];
+            if (a.owned[String(id)]) continue;
+            return { rank: a.ids.indexOf(String(id)), byScore: a.scores.indexOf(String(id)), of: a.ids.length, adviceHb: a.hb };
+        }
+        return { rank: null, byScore: null, of: 0, adviceHb: null };
+    }
+    function rememberAdvice(recs, owned) {
+        var ids = [], scores = [], own = {};
+        for (var i = 0; i < recs.length; i++) ids.push(String(recs[i].id));
+        for (var j = 0; j < _lastCand.length; j++) scores.push(String(_lastCand[j].id));
+        for (var k in owned) if (owned.hasOwnProperty(k)) { var id = nameToId(k); if (id) own[String(id)] = 1; }
+        _adviceHistory.push({ ids: ids, scores: scores, owned: own, hb: _hb });
+        if (_adviceHistory.length > 40) _adviceHistory.shift();
+    }
     function cardOwned(e) {
         var own = false;
         try { own = e.BHasClass("owned") || e.BHasClass("usedAsComponent"); } catch (x) {}
@@ -776,7 +797,7 @@
         var ownNow = {}, notOwn = {};
         for (var i = 0; i < entries.length; i++) {
             var e = entries[i];
-            if (!e.FindChildrenWithClassTraverse) continue;
+            if (!e.FindChildrenWithClassTraverse || !_vis(e) || !(e.actuallayoutwidth > 0)) continue;
             var own = cardOwned(e), si = _staleCards.length ? _staleCards.indexOf(e) : -1;
             if (si !== -1) { if (own) continue; _staleCards.splice(si, 1); }   // stale until it shows "not owned"
             var nms = e.FindChildrenWithClassTraverse("modName") || [];
@@ -784,14 +805,18 @@
                 var t = ""; try { t = String(nms[k].text || "").replace(/^\s+|\s+$/g, ""); } catch (x) {}
                 if (!t) continue;
                 var key = canonItem(t);
-                if (own) { ownNow[key] = 1; if (!_ownedAccum[key]) { _ownedAccum[key] = 1; _ownedAt[key] = _hb; } }
-                else notOwn[key] = 1;
+                var id = nameToId(key);
+                if (own && !hasCls(e, "usedAsComponent")) {
+                    ownNow[key] = 1; delete _ownedMissing[key];
+                    if (id && !_soldAwaitClear[key] && !coveredComponents(_ownedAccum)[String(id)]) markOwned(id, true, "shop");
+                } else { notOwn[key] = 1; delete _soldAwaitClear[key]; }
             }
         }
         for (var nk in notOwn) if (notOwn.hasOwnProperty(nk) && !ownNow[nk] && _ownedAccum[nk] && _hb - (_ownedAt[nk] || 0) >= 5) {
-            delete _ownedAccum[nk];
-            if (_ownLog.length >= 3) _ownLog.shift();
-            _ownLog.push("-" + itemName(nameToId(nk) || nk) + " (shop)");
+            if (!_ownedMissing[nk]) _ownedMissing[nk] = { hb: _hb, count: 0, last: -1 };
+            var missing = _ownedMissing[nk];
+            if (missing.last !== _hb) { missing.count++; missing.last = _hb; }
+            if (missing.count >= 3 && _hb - missing.hb >= 3) markOwned(nameToId(nk), false, "shop_missing");
         }
         if (_ownedDiagN < 8) { _ownedDiagN++;  }
         return _ownedAccum;
@@ -963,16 +988,19 @@
         }
         cand.sort(function (a, b) { return b.score - a.score; });   // re-rank by mode + matchup
         _lastCand = cand;                                            // for Soul-holding preview
-        if (souls > 0) {
-            var aff = [], soon = [];
-            for (var i = 0; i < cand.length; i++) { if (cand[i].cost <= souls) aff.push(cand[i]); else soon.push(cand[i]); }
-            soon.sort(function (a, b) { return a.cost - b.cost; });   // cheapest upcoming
-            for (var s = 0; s < soon.length; s++) soon[s].aff = false;
-            return aff.concat(soon);                          // affordable (value-sorted) then save-toward
+        return orderPurchases(cand, souls, tSec, ownedCount);
+    }
+    function orderPurchases(cand, souls, tSec, ownedCount) {
+        var time = Math.max(0, tSec || 0), minTier = time >= 1800 ? 4 : (time >= 1200 ? 3 : (time >= 540 ? 2 : 1));
+        // A zero balance during a match is known poverty, not the hideout fallback.
+        if (!(souls > 0) && !time && !ownedCount) return cand.filter(function (x) { x.aff = false; return x.tier <= 2; });
+        var goals = [], filler = [];
+        for (var i = 0; i < cand.length; i++) {
+            cand[i].aff = souls > 0 && cand[i].cost <= souls;
+            (cand[i].tier >= minTier ? goals : filler).push(cand[i]);
         }
-        // souls unknown (hideout): cap tier by owned count as a build-progress proxy
-        var cap = ownedCount <= 1 ? 2 : (ownedCount <= 4 ? 3 : 4);
-        return cand.filter(function (x) { return x.tier <= cap; });
+        // Score order persists while saving; spending on a cheap filler cannot jump ahead of the goal.
+        return goals.concat(filler);
     }
 
     // ---- UI helpers ---------------------------------------------------------
@@ -1204,6 +1232,9 @@
             padding: "12px 14px", flowChildren: "down", zIndex: "1000", opacity: "1",
             boxShadow: "0px 2px 10px 0px #000000b0"
         });
+        _rankNotice = $.CreatePanel("Label", _float, "RankNotice");
+        css(_rankNotice, { color: PAL.gold, fontSize: "13px", width: "100%", marginBottom: "4px", whiteSpace: "normal" });
+        _rankNotice.SetPanelEvent("onactivate", function () { if (!_cfgShown) toggleConfig(); });
         var titleRow = $.CreatePanel("Panel", _float, ""); css(titleRow, { flowChildren: "right", marginBottom: "8px", width: "100%" });
         // gear (real Deadlock icon) left, then title; souls + [?] help docked right.
         _gearBtn = mkIconBtn(titleRow, ICON_GEAR, toggleConfig, 26);
@@ -1332,14 +1363,11 @@
         return _rankProbe;
     }
     // ---- QUEUE SYNC: our #1 pick at the front of the game's quick-buy queue ----------
-    // The quick-buy queue lives on the server (C_CitadelPlayerPawn::m_vecQuickbuyQueue) and the game buys
-    // its front item by itself at a shop, even with the shop closed. client.dll registers the Panorama
-    // event CitadelQuickbuyAddItem; probing in-game (2026-10-23, client 6819) showed it takes 3 numbers and
-    // (unsigned item id, 0, 0) inserts the item at the FRONT (signed ids or other shapes fail to parse or
-    // misbehave). Entries are #QuickbuyQueue > CitadelHudQuickbuyEntry with a localized #ModName and a
-    // #DeleteButton that removes the entry when activated. We only ever add or remove our own pick; the
-    // player's build items stay queued behind it.
+    // The server owns the quick-buy queue. The client controller emits "quickbuy add" commands;
+    // route those through the game's CitadelConCommand UI event. Its AddItem event is native-only
+    // in client 6839: the text parser always returns null. Read the actual HUD queue after rebuilding.
     var QS_N = 6;                       // queue length we keep: enough that Quick Buy never runs dry between refreshes
+    var _qsGeneration = 0;
     var _qsNextAt = 0, _qbPanel = null, _qsSetupDone = false, _qsSetupLog = "-", _qsWant = [], _qsAqWasOn = false;
     // Turning Auto-queue off gives the game's own "auto-queue build" back if we were the ones who
     // switched it off (it is a saved game setting, not ours).
@@ -1361,7 +1389,21 @@
         }
         return out;
     }
-    function qbAddFront(id) { try { $.DispatchEvent("CitadelQuickbuyAddItem", Number(id), 0, 0); } catch (e) {} }
+    function quickbuyCommand(command) {
+        try {
+            $.DispatchEvent("CitadelConCommand", command);
+            ilog("queue_command", { command: command });
+            return true;
+        } catch (e) { ilog("error", { where: "queue_command", command: command, msg: String(e) }); return false; }
+    }
+    function qbAddItem(id) {
+        var token = Number(id);
+        if (!(token > 0 && token <= 4294967295 && Math.floor(token) === token)) return false;
+        // Match CCitadelQuickbuyController's own command: item, front flag, sell flag, source.
+        // The current CitadelQuickbuyAddItem textual parser returns a null event, so DispatchEvent
+        // cannot construct it even though its native four-parameter type is registered.
+        return quickbuyCommand("quickbuy add " + token + " 0 false 0");
+    }
     function isOn(p) {
         if (!p) return null;
         try { if (typeof p.checked === "boolean") return p.checked; } catch (e) {}
@@ -1372,18 +1414,19 @@
     function queueSetup(root) {
         if (_qsSetupDone || !root || !root.FindChildTraverse) return;
         var aq = root.FindChildTraverse("AutoQueueToggleButton"), ab = root.FindChildTraverse("AutoBuyToggleButton");
-        if (!aq && !ab) return;
+        if (!aq || !ab) return; // retry until both controls have been created
         var aqOn = isOn(aq), abOn = isOn(ab), log = [];
         if (aq && aqOn) { try { $.DispatchEvent("Activated", aq, "mouse"); _qsAqWasOn = true; log.push("build auto-queue off"); } catch (e) {} }
         if (ab && abOn === false) { try { $.DispatchEvent("Activated", ab, "mouse"); log.push("auto-buy on"); } catch (e) {} }
         _qsSetupLog = (log.join(", ") || "nothing to change") + " (aq " + aqOn + ", ab " + abOn + ")";
-        _qsSetupDone = true;
+        ilog("queue_setup", { autoQueue: aqOn, autoBuy: abOn, action: _qsSetupLog });
+        _qsSetupDone = aqOn === false && abOn === true; // confirm actual state on the next tick
     }
     function queueSync(root, shop) {
         if (!CFG.qsync || !_heroId || _hb < _qsNextAt) return;
         queueSetup(root);
-        // the queue is exactly the panel's list: same items, same order (affordable first, then the
-        // cheapest ones to save for) — raw score order put late-game T4s first while you had 0 souls
+        // The queue follows the panel: phase-appropriate goals first, even while saving.
+        // Cheap filler must not consume the balance ahead of the saving goal.
         var recs = computeRecs(_heroId, getSouls(root), getOwnedNames(shop), _enemies, getGameTimeSec(root)), want = [];
         for (var i = 0; i < recs.length && want.length < QS_N; i++) want.push(recs[i].id);
         _qsWant = want;
@@ -1395,9 +1438,19 @@
         // rebuild: clear, let the server apply it, then append the picks in order (an add right after
         // the clear was lost in testing, so the first one waits 0.8 s and the rest are spaced 0.5 s)
         _qsNextAt = _hb + 8; _qsBusyUntil = _hb + 6;      // entries vanish during the rebuild: not purchases
-        try { $.DispatchEvent("CitadelQuickbuyClearQueue"); } catch (e) {}
-        var k = 0;
-        $.Schedule(0.8, function addNext() { if (k >= want.length) return; qbAddFront(want[k++]); $.Schedule(0.5, addNext); });
+        if (!quickbuyCommand("quickbuy clear")) return;
+        ilog("queue_rebuild", { want: want, have: have, setup: _qsSetupLog });
+        // The native quickbuy command appends: send the best pick first.
+        var k = 0, hero = _heroId, generation = ++_qsGeneration;
+        $.Schedule(0.8, function addNext() {
+            if (!CFG.qsync || _heroId !== hero || generation !== _qsGeneration || k >= want.length) return;
+            qbAddItem(want[k++]);
+            $.Schedule(0.5, addNext);
+        });
+        $.Schedule(4.5, function () {
+            if (!CFG.qsync || _heroId !== hero || generation !== _qsGeneration) return;
+            ilog("queue_result", { want: want, have: qbQueue().map(function (x) { return x.id; }), panelFound: valid(_qbPanel) });
+        });
     }
     // ---- OWN PURCHASES ---------------------------------------------------------
     // Shop cards bind their names only in the active tab and client 6819's feed has no buyer, so a
@@ -1411,7 +1464,17 @@
     function markOwned(id, on, why) {
         var it = DATA.items[String(id)], key = it ? String(it.n).toLowerCase() : null;
         if (!key || !!_ownedAccum[key] === on) return false;
-        if (on) { _ownedAccum[key] = 1; _ownedAt[key] = _hb; } else delete _ownedAccum[key];
+        if (on && coveredComponents(_ownedAccum)[String(id)]) return false;
+        var advice = on ? purchaseAdvice(id) : null;
+        if (on) {
+            _ownedAccum[key] = 1; _ownedAt[key] = _hb; delete _soldAwaitClear[key]; delete _ownedMissing[key];
+            var components = {}; markCovered(String(id), components);
+            for (var cid in components) if (components.hasOwnProperty(cid)) {
+                var cm = DATA.items[cid], ck = cm && String(cm.n).toLowerCase();
+                if (ck && _ownedAccum[ck]) { delete _ownedAccum[ck]; _inventoryChanges[ck] = { why: "consumed", parent: Number(id) }; }
+            }
+        } else { delete _ownedAccum[key]; delete _ownedMissing[key]; if (why === "sold") _soldAwaitClear[key] = 1; }
+        _inventoryChanges[key] = { why: why, advice: advice };
         if (_ownLog.length >= 3) _ownLog.shift();
         _ownLog.push((on ? "+" : "-") + itemName(id) + " (" + why + ")");
         return true;
@@ -1524,12 +1587,12 @@
     // never opened again): drop every cached handle so this map's panels are found. Also done on a relog.
     function dropHandles() {
         _shopCands = []; _shopSeenOpen = false; _imbuePanel = null; _popupMgr = null; _abilityBtns = null;
-        _recentContCache = null; _goldLabelCache = null; _toastMgr = null; _topPlayers = null;
+        _recentContCache = null; _goldLabelCache = null; _toastMgr = null; _topPlayers = null; _qbPanel = null;
     }
     function resetMatch(root, why, mid) {
         markStaleCards();
         dropHandles();
-        _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};
+        _qsGeneration++; _ownedAccum = {}; _ownedAt = {}; _ownedMissing = {}; _soldAwaitClear = {}; _inventoryChanges = {}; _adviceHistory = []; _qPrev = null; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};
         _logOwned = {}; _logRecSig = ""; _advice = []; _logLv = null; _lvMax = [0, 0, 0, 0];
         // the hero is picked again for the match: keeping the hideout hero gave Rem's advice and imbue
         // slots to a Deadman Danny for a whole evening (2026-10-26)
@@ -1539,6 +1602,7 @@
         // were never seen) and old toasts may still be up: mark both as handled, or they would come back
         // as this match's enemy items and purchases.
         _enemyItems = {}; _rpEnemySig = ""; _qsSetupDone = false;
+        _rankTier = null; _rankSub = null; _rankNextAt = 0; _rankTries = 0; _rankState = "";
         watchToasts(root, true);
         var cont = valid(_recentContCache) ? _recentContCache : (root && root.FindChildTraverse ? root.FindChildTraverse("RecentPurchasesContainer") : null);
         var ents = cont && cont.FindChildrenWithClassTraverse ? (cont.FindChildrenWithClassTraverse("recentPurchase") || []) : [];
@@ -1551,17 +1615,19 @@
     function logOwned() {
         var k, src = _ownLog.length ? _ownLog[_ownLog.length - 1] : "";
         for (k in _ownedAccum) if (_ownedAccum.hasOwnProperty(k) && !_logOwned[k]) {
-            var id = nameToId(k), byScore = -1;
-            // rank = place in the list as shown (affordable first); byScore = place by score alone, since an
-            // item still a little too dear 5 s before the buy sits deep in the "save for" tail of the list
-            for (var si = 0; id && si < _lastCand.length; si++) if (_lastCand[si].id === String(id)) { byScore = si; break; }
-            ilog("buy", { item: id ? Number(id) : k, name: k, rank: id ? _advice.indexOf(String(id)) : -1, byScore: byScore, of: _advice.length, src: src });
+            var id = nameToId(k), change = _inventoryChanges[k] || {}, a = change.advice || purchaseAdvice(id);
+            // Shop state is inventory evidence, not proof that a purchase happened this tick.
+            ilog(change.why === "shop" ? "inventory_sync" : "buy", { item: id ? Number(id) : k, name: k,
+                rank: a.rank, byScore: a.byScore, of: a.of, adviceHb: a.adviceHb, src: change.why || src });
             if (id && _heroId && DATA.imbue && DATA.imbue[String(_heroId)] && DATA.imbue[String(_heroId)][id]) imbueWatch(id);
         }
         for (k in _logOwned) if (_logOwned.hasOwnProperty(k) && !_ownedAccum[k]) {
             var sid = nameToId(k);
-            ilog("sell", { item: sid ? Number(sid) : k, name: k, src: src });
+            var removal = _inventoryChanges[k] || {};
+            ilog(removal.why === "consumed" ? "component_consumed" : (removal.why === "sold" ? "sell" : "inventory_missing"),
+                { item: sid ? Number(sid) : k, name: k, src: removal.why || src, parent: removal.parent || null });
         }
+        _inventoryChanges = {};
         _logOwned = {};
         for (k in _ownedAccum) if (_ownedAccum.hasOwnProperty(k)) _logOwned[k] = 1;
     }
@@ -1589,7 +1655,7 @@
         var rk = _rankTier !== null ? RANK_NAMES[_rankTier] + (_rankSub !== null ? " " + _rankSub : "") : T("noRank");
         hintLabel(T("data") + ": " + bandName + (CFG.rank ? "" : " · " + T("autoRank") + ": " + rk) + " · " + T("tiersHint"));
         // 2) auto-queue: our picks become the game's Quick Buy queue
-        switchRow(_cfgBox, T("queue"), CFG.qsync, function (v) { CFG.qsync = v; _qsNextAt = 0; _qsSetupDone = false; if (!v) queueRestore(); renderConfig(); });
+        switchRow(_cfgBox, T("queue"), CFG.qsync, function (v) { CFG.qsync = v; _qsGeneration++; ilog("config", { key: "qsync", value: v }); _qsNextAt = 0; _qsSetupDone = false; if (!v) queueRestore(); renderConfig(); });
         hintLabel(T("queueHint"));
         // 3) rank numbers on the shop cards
         switchRow(_cfgBox, T("marks"), CFG.badges, function (v) { CFG.badges = v; refreshFloat(hudRoot(), null); renderConfig(); });
@@ -1646,6 +1712,7 @@
             top.push([Number(it.id), r3(it.score), r3(w.pick), r3(w.v), r3(w.mu), r3(w.syn), r3(w.ctr), r3(w.ta), r3(w.tb),
                       it.aff ? 1 : 0, it.late ? 1 : 0, it.imb || 0]);
         }
+        rememberAdvice(recs, owned);
         var own = [];
         for (var k in owned) if (owned.hasOwnProperty(k)) { var oid = nameToId(k); own.push(oid ? Number(oid) : k); }
         ilog("recs", { hero: _heroId, band: bandId(), mode: CFG.mode, souls: souls, phase: flowPhase(t), enemies: _enemies,
@@ -1663,6 +1730,11 @@
         var sig = Object.keys(owned).sort().join(",");
         if (sig !== _ownedSig) { _ownedSig = sig;  }
         if (valid(_title)) _title.text = T("title");
+        var unknownRank = !CFG.rank && !autoBand();
+        if (valid(_rankNotice)) {
+            _rankNotice.text = unknownRank ? (_uiLang === "russian" ? "Ранг не определён · таблицы " + bandId() + " · выберите ранг в ⚙" : "Rank unknown · using " + bandId() + " · choose rank in ⚙") : "";
+            css(_rankNotice, { visibility: unknownRank ? "visible" : "collapse" });
+        }
         if (!valid(_body)) return;
         // --- placeholder states (compute nothing heavy) ---
         if (!hero) {
@@ -2085,7 +2157,7 @@
         if (_heroHist.length >= 4) _heroHist.shift();
         _heroHist.push(((DATA.heroes && DATA.heroes[String(h)]) || h) + "(" + src + ")");
         if (_heroId) markStaleCards(); else _staleCards = [];   // a real switch: the old hero's cards are stale
-        _heroId = h; _ownedAccum = {}; _ownedAt = {}; _qPrev = null; _ownLog = []; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
+        _heroId = h; _qsGeneration++; _ownedAccum = {}; _ownedAt = {}; _ownedMissing = {}; _soldAwaitClear = {}; _inventoryChanges = {}; _adviceHistory = []; _qPrev = null; _ownLog = []; _ownedSig = ""; _ownedDiagN = 0; _coachFired = {};   // new hero/match -> reset owned + coach
         _logOwned = {}; _logRecSig = ""; _advice = []; _lvMax = [0, 0, 0, 0]; _logLv = null; _skillSig = "";
         ilog("hero", { hero: h, name: DATA.heroes && DATA.heroes[String(h)], src: src, label: _heroLabel, band: bandId(), rank: [_rankTier, _rankSub] });
         _enemyItems = {}; _rpSeen = {}; _rpEnemySig = "";   // reset accumulated enemy purchases
@@ -2101,6 +2173,8 @@
             if (h && h !== _heroId) setHero(h, top ? "topbar" : "shop", root, shop);
         }
         detectRank(root);
+        var rankState = (CFG.rank ? "manual" : (autoBand() ? "detected" : "fallback")) + ":" + bandId();
+        if (rankState !== _rankState) { _rankState = rankState; ilog("rank", { source: rankState.split(":")[0], band: bandId(), tier: _rankTier }); }
         if (_heroId) {
             var en = scanEnemies(root, _heroId);
             var lane = scanLane(root, en);
@@ -2110,7 +2184,9 @@
                 var sig = en.slice().sort(function (a, b) { return a - b; }).join(",");
                 if (sig !== _enemySig) {
                     _enemySig = sig; _enemies = en;
-                    ilog("enemies", { enemies: en });
+                    var players = topBarPlayers(root), unresolved = [];
+                    for (var pi = 0; pi < players.length; pi++) if (!heroesInPanel(players[pi]).length) unresolved.push(String(players[pi].id || pi));
+                    ilog("enemies", { enemies: en, complete: en.length === 6, players: players.length, unresolved: unresolved });
                     if (valid(_float)) refreshFloat(root, shop);
                 }
             }
@@ -2157,7 +2233,7 @@
                 for (var ai = 0; ai < adv.length && ai < 8; ai++) sigA.push(adv[ai].id);
                 var asig = "closed|" + sigA.join(",");
                 if (asig !== _logRecSig) { _logRecSig = asig; logRecs(adv, getSouls(root), _logT, _ownedAccum); }
-                else { _advice = []; for (var aj = 0; aj < adv.length; aj++) _advice.push(adv[aj].id); }
+                else { rememberAdvice(adv, _ownedAccum); _advice = []; for (var aj = 0; aj < adv.length; aj++) _advice.push(adv[aj].id); }
             }
         }
         watchMatch(root);
@@ -2171,7 +2247,7 @@
         // Enemies and lane from the top bar, also with the shop closed: a player buying through Quick Buy
         // may never open the shop (2026-10-29: a whole match without matchups). Every 10 s until found,
         // then every 60 s.
-        if (_heroId && _hb >= _enemyScanAt) { _enemyScanAt = _hb + (_enemies.length ? 60 : 10); scanPlayers(root, null); }
+        if (_heroId && _hb >= _enemyScanAt) { _enemyScanAt = _hb + (_enemies.length >= 6 ? 60 : 10); scanPlayers(root, null); }
         watchOwn(root, shop);
         logOwned();
         if (CFG.qsync && _hb % 2 === 0) queueSync(root, shop);   // also with the shop closed: the game buys the queue front
